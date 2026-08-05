@@ -1,0 +1,24 @@
+{
+  "name": "i-Dhanwantari ENT Patient Care & Recovery Portal",
+  "short_name": "i-Dhanwantari",
+  "description": "ABDM-aligned, HL7 v2 + FHIR R4 clinical patient education and recovery portal for ENT superspeciality care pathways.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f6f8fb",
+  "theme_color": "#2563eb",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

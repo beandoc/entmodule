@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx --no-install playwright --version)",
+      "Read(//Users/sachinsrivastava/.claude/plugins/cache/claude-plugins-official/**)"
+    ]
+  }
+}

@@ -1,0 +1,472 @@
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ----------------------------------------------------
+// Semantic Layer
+// ----------------------------------------------------
+
+model Topic {
+  id           String          @id @default(uuid())
+  code         String          @unique
+  title        String
+  description  String
+  topicType    String          // condition, procedure, investigation, device, therapy, medication, anatomy, lifestyle
+  subspeciality String         // otology, rhinology, laryngology, paediatric, head_neck, etc.
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  codeMaps     ClinicalCodeMap[]
+  relationsFrom TopicRelation[] @relation("SourceTopic")
+  relationsTo   TopicRelation[] @relation("TargetTopic")
+  assets       Asset[]
+}
+
+model TopicRelation {
+  id            String   @id @default(uuid())
+  sourceTopicId String
+  targetTopicId String
+  relationType  String   // treats, diagnoses, complication_of, precedes, alternative_to, part_of
+  
+  sourceTopic   Topic    @relation("SourceTopic", fields: [sourceTopicId], references: [id], onDelete: Cascade)
+  targetTopic   Topic    @relation("TargetTopic", fields: [targetTopicId], references: [id], onDelete: Cascade)
+}
+
+model ClinicalCodeMap {
+  id         String   @id @default(uuid())
+  topicId    String
+  system     String   // SNOMED_CT, ICD_10, ICD_11, LOINC, GMDN
+  code       String
+  display    String
+  
+  topic      Topic    @relation(fields: [topicId], references: [id], onDelete: Cascade)
+}
+
+model GlossaryTerm {
+  id          String   @id @default(uuid())
+  term        String   @unique
+  locale      String   // en, hi, ta, te, etc.
+  definition  String
+  simpleText  String?
+}
+
+// ----------------------------------------------------
+// Content Layer (Versioned, Immutable-on-Publish)
+// ----------------------------------------------------
+
+model Asset {
+  id          String         @id @default(uuid())
+  topicId     String
+  format      String         // video, audio, text, illustration, 3d_model, checklist
+  audience    String         // patient, caregiver, paediatric
+  
+  topic       Topic          @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  versions    AssetVersion[]
+}
+
+model AssetVersion {
+  id                     String         @id @default(uuid())
+  assetId                String
+  versionNumber          Int
+  status                 String         // draft, in_review, approved, published, superseded, expired, withdrawn
+  approvedByPractitioner String?        // HPR ID
+  approvedOn             DateTime?
+  nextReviewDue          DateTime?
+  readabilityScore       Float?         // Grade level score
+  evidenceRefs           String         // JSON string array
+  changelog              String?
+  createdAt              DateTime       @default(now())
+
+  asset                  Asset          @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  localeVariants         LocaleVariant[]
+}
+
+model LocaleVariant {
+  id               String       @id @default(uuid())
+  assetVersionId   String
+  locale           String       // en, hi, ta, te, kn, mr, bn
+  title            String
+  bodyMarkdown     String?
+  isStale          Boolean      @default(false)
+  sourceVersionId  String?
+
+  assetVersion     AssetVersion @relation(fields: [assetVersionId], references: [id], onDelete: Cascade)
+  mediaObjects     MediaObject[]
+}
+
+model MediaObject {
+  id               String        @id @default(uuid())
+  localeVariantId  String
+  objectKey        String
+  mimeType         String
+  durationSeconds  Int?
+  posterUrl        String?
+  captionTrackUrl  String        // Mandatory
+  transcriptText   String        // Mandatory
+  audioDescUrl     String?
+
+  localeVariant    LocaleVariant @relation(fields: [localeVariantId], references: [id], onDelete: Cascade)
+}
+
+model LicenseGrant {
+  id                String    @id @default(uuid())
+  vendor            String
+  licenseTerm       String
+  permittedChannels String    // web, pwa
+  expiresAt         DateTime
+}
+
+// ----------------------------------------------------
+// Clinical Catalogue & Patient Material Extensions
+// ----------------------------------------------------
+
+model SkillGuide {
+  id           String   @id @default(uuid())
+  title        String
+  category     String   // nasal_spray, ear_drops, tracheostomy, stoma, voice_rest, epley, epistaxis
+  rightWay     String
+  wrongWay     String
+  stepsJson    String   // JSON array of step descriptions
+  videoUrl     String?
+  captionUrl   String
+  transcript   String
+}
+
+model EpistaxisTrigger {
+  id           String   @id @default(uuid())
+  name         String   // e.g. Fish Oil, Garlic, Aspirin
+  category     String   // HERBAL, MEDICATION, ENVIRONMENTAL
+  riskEffect   String   // Increases bleeding risk by antiplatelet effect
+  advice       String   // Inform doctor before procedures
+}
+
+model OtotoxicDrug {
+  id           String   @id @default(uuid())
+  drugClass    String   // Aminoglycoside, Platinum Chemotherapy, Loop Diuretic, Salicylate
+  genericName  String   // Gentamicin, Cisplatin, Furosemide, Aspirin
+  targetOrgan  String   // Cochlea, Vestibule, Stria Vascularis
+  earlySign    String   // Tinnitus, high-frequency hearing loss (>8 kHz)
+  reversibility String  // Permanent / Reversible upon discontinuation
+}
+
+model ChildMilestone {
+  id           String   @id @default(uuid())
+  ageBracket   String   // 0-3 months, 6 months, 9 months, 12 months, 18 months, 2 years
+  hearingCheck String   // Response to sound
+  speechCheck  String   // Expected speech output
+  redFlag      String   // Warning sign for audiometry referral
+}
+
+model TinnitusGuide {
+  id           String   @id @default(uuid())
+  tinnitusType String   // Subjective Ringing, Pulsatile Throbbing, Hyperacusis, Clicking Myoclonus
+  title        String
+  description  String
+  management   String
+  redFlag      String?
+}
+
+model HearingDeviceGuide {
+  id           String   @id @default(uuid())
+  deviceType   String   // BTE, RIC, ITE, CIC, CROS, BiCROS, BAHA
+  title        String
+  description  String
+  idealFor     String
+  careTips     String
+}
+
+model CochlearImplantJourney {
+  id           String   @id @default(uuid())
+  stage        String   // Pre-Op Evaluation, Vaccine & Imaging, Surgery & Healing, Switch-On Day 1, 2-Year AVT
+  title        String
+  description  String
+  patientTask  String
+  soundQuality String?  // Expected sound perception (e.g. robotic initially, natural after AVT)
+}
+
+model EarInfectionGuide {
+  id           String   @id @default(uuid())
+  infectionType String  // Swimmer Ear (AOE), Acute Otitis Media (AOM), Fluid in Ear (OME), Malignant OE
+  title        String
+  description  String
+  treatmentRule String  // e.g. No antibiotics for OME, Amoxicillin for AOM, IV for Malignant
+  preventionTip String
+}
+
+model CoughGuide {
+  id           String   @id @default(uuid())
+  coughCategory String  // UACS Postnasal, Asthma Variant, GERD Reflux, ACE-Inhibitor, Neuropathic
+  title        String
+  description  String
+  actionPlan   String
+  redFlag      String?
+}
+
+model DysphagiaGuide {
+  id           String   @id @default(uuid())
+  dysphagiaType String  // Oropharyngeal, Silent Aspiration, Frazier Water Protocol, Post-Intubation, Radiation Fibrosis
+  title        String
+  description  String
+  maneuverTip  String   // e.g. Chin-tuck, Mendelsohn, Effortful Swallow
+  redFlag      String?
+}
+
+model CleftCareJourney {
+  id           String   @id @default(uuid())
+  ageMilestone String   // Newborn (0-2 Wks), 2-6 Months, 8-12 Months, 6-10 Years, 16-21 Years
+  title        String
+  intervention String   // Feeding bottle, Lip repair, Palate repair & Ear tubes, Dental/Orthodontic, Orthognathic
+  caregiverTask String
+}
+
+model AirwayEndoscopyGuide {
+  id           String   @id @default(uuid())
+  procedureType String  // Button Battery Emergency, Airway Foreign Body, Caustic Ingestion, Food Impaction, Zenker
+  title        String
+  description  String
+  emergencyStep String
+  preventionTip String
+}
+
+model DhingraClinicalGuide {
+  id           String   @id @default(uuid())
+  specialty    String   // Otology, Rhinology, Laryngology, Pharynx, Salivary, Thyroid
+  title        String
+  description  String
+  actionRules  String
+  warningSign  String?
+}
+
+model AbhaConsent {
+  id                  String   @id @default(uuid())
+  patientMrn          String   @unique
+  abhaNumber          String   // 14-digit ABHA ID or abha.address@abdm
+  abhaAddress         String?
+  hospitalHisName     String   // e.g. Command Hospital (SC), Pune HIS
+  authorizedDoctorHpr String   // Doctor HPR ID (e.g. HPR-IN-987654)
+  shareSymptomLogs    Boolean  @default(true)
+  sharePromScores     Boolean  @default(true)
+  disclaimerAccepted  Boolean  @default(true)
+  consentSignedAt     DateTime @default(now())
+  validUntil          DateTime
+}
+
+model DecisionAid {
+  id             String   @id @default(uuid())
+  topicCode      String
+  title          String
+  optionA        String   // e.g. Cochlear Implant
+  optionB        String   // e.g. Hearing Aid
+  benefitRateA   Int      // out of 100
+  benefitRateB   Int      // out of 100
+  riskRateA      Int      // out of 100
+  riskRateB      Int      // out of 100
+  description    String
+}
+
+model RiskDisclosure {
+  id             String   @id @default(uuid())
+  procedureCode  String
+  title          String
+  riskName       String   // e.g. Facial Nerve Weakness
+  numericRatePct Float    // e.g. 1.5%
+  departmentRate Float    // e.g. 0.8%
+  explanation    String
+  preventionInfo String
+}
+
+model IndiaEntitlement {
+  id          String   @id @default(uuid())
+  schemeCode  String   // AYUSHMAN, ADIP, UDID, STATE_CI, COST_GUIDE
+  title       String
+  eligibility String
+  coverage    String
+  documents   String   // JSON string list of required documents
+}
+
+model PreventableHarmAlert {
+  id            String   @id @default(uuid())
+  procedureCode String
+  dayIndex      Int      // e.g. D5 post-tonsillectomy
+  alertTitle    String
+  alertMessage  String
+  urgencyLevel  String   // EMERGENCY, WARNING, ADVISORY
+}
+
+model StomaEmergencyCard {
+  id              String   @id @default(uuid())
+  patientMrn      String   @unique
+  patientName     String
+  headlineText    String   // "I AM A NECK BREATHER"
+  instructions    String   // Mouth-to-mouth will NOT work. Apply oxygen/bag-valve to stoma.
+  emergencyPhone  String
+  createdAt       DateTime @default(now())
+}
+
+model PatientStory {
+  id            String   @id @default(uuid())
+  title         String
+  patientName   String
+  procedureName String
+  storyMarkdown String
+  videoUrl      String?
+  captionUrl    String
+  transcript    String
+}
+
+model ConsultAnnotation {
+  id               String   @id @default(uuid())
+  educationOrderId String
+  structureName    String   // Temporal Bone, Larynx, Sinuses
+  annotationJson   String   // Vector drawing coordinates / notes
+  createdById      String   // Practitioner HPR ID
+  createdAt        DateTime @default(now())
+}
+
+// ----------------------------------------------------
+// Care Pathway Layer
+// ----------------------------------------------------
+
+model PathwayTemplate {
+  id            String        @id @default(uuid())
+  code          String        @unique // e.g. cochlear_implant_adult_unilateral
+  title         String
+  subspeciality String
+  description   String
+  
+  steps         PathwayStep[]
+  orders        EducationOrder[]
+}
+
+model PathwayStep {
+  id                 String          @id @default(uuid())
+  pathwayTemplateId  String
+  stepOrder          Int
+  title              String
+  journeyStage       String          // pre_op, day_of_surgery, post_op_d1, recovery, rehab, surveillance
+  timingAnchor       String          // surgery_date, discharge_date, order_date, switch_on_date, therapy_start
+  offsetDays         Int
+  isMandatory        Boolean         @default(true)
+  gatingRule         String?         // optional rule expression
+  topicCode          String
+
+  pathwayTemplate    PathwayTemplate @relation(fields: [pathwayTemplateId], references: [id], onDelete: Cascade)
+  orderSteps         OrderStep[]
+}
+
+// ----------------------------------------------------
+// Patient & Order Layer
+// ----------------------------------------------------
+
+model PatientRef {
+  id             String          @id @default(uuid())
+  mrn            String          @unique
+  abhaAddressHash String?
+  ageBand        String          // paediatric, adult, senior
+  isUnder18      Boolean         @default(false)
+  sex            String
+  languagePref   String          @default("en")
+  phoneHash      String?
+  createdAt      DateTime        @default(now())
+
+  guardianLinks  GuardianLink[]
+  orders         EducationOrder[]
+}
+
+model GuardianLink {
+  id               String     @id @default(uuid())
+  patientRefId     String
+  guardianAbhaHash String
+  guardianRelation String
+  verifiedAt       DateTime   @default(now())
+
+  patientRef       PatientRef @relation(fields: [patientRefId], references: [id], onDelete: Cascade)
+}
+
+model EducationOrder {
+  id                String       @id @default(uuid())
+  patientRefId      String
+  pathwayTemplateId String
+  orderedBy         String       // Practitioner HPR ID
+  encounterRef      String
+  disclosureState   String       @default("released") // embargoed, released (Sensitve-disclosure gating)
+  releasedAt        DateTime?
+  releasedBy        String?
+  anchorSurgeryDate DateTime?
+  anchorDischargeDate DateTime?
+  createdAt         DateTime     @default(now())
+
+  patientRef        PatientRef   @relation(fields: [patientRefId], references: [id], onDelete: Cascade)
+  pathwayTemplate   PathwayTemplate @relation(fields: [pathwayTemplateId], references: [id], onDelete: Cascade)
+  orderSteps        OrderStep[]
+  acknowledgements  EducationAcknowledgement[]
+  comprehensions    ComprehensionResponse[]
+  promResponses     PROMResponse[]
+}
+
+model OrderStep {
+  id               String         @id @default(uuid())
+  educationOrderId String
+  pathwayStepId    String
+  scheduledFor     DateTime
+  status           String         // scheduled, delivered, completed, skipped
+  deliveredAt      DateTime?
+
+  educationOrder   EducationOrder @relation(fields: [educationOrderId], references: [id], onDelete: Cascade)
+  pathwayStep      PathwayStep    @relation(fields: [pathwayStepId], references: [id], onDelete: Cascade)
+  engagementEvents EngagementEvent[]
+}
+
+model EngagementEvent {
+  id           String      @id @default(uuid())
+  orderStepId  String
+  eventType    String      // delivered, opened, playback_pct, chapter_reached, transcript_opened, glossary_tapped
+  detailsJson  String?     // JSON details
+  timestamp    DateTime    @default(now())
+
+  orderStep    OrderStep   @relation(fields: [orderStepId], references: [id], onDelete: Cascade)
+}
+
+model ComprehensionResponse {
+  id               String         @id @default(uuid())
+  educationOrderId String
+  topicCode        String
+  scorePct         Float
+  answersJson      String
+  submittedAt      DateTime       @default(now())
+
+  educationOrder   EducationOrder @relation(fields: [educationOrderId], references: [id], onDelete: Cascade)
+}
+
+model EducationAcknowledgement {
+  id               String         @id @default(uuid())
+  educationOrderId String
+  assetVersionId   String
+  signedAt         DateTime       @default(now())
+  signaturePayload String         // Medico-legal verification payload
+
+  educationOrder   EducationOrder @relation(fields: [educationOrderId], references: [id], onDelete: Cascade)
+}
+
+model PROMResponse {
+  id               String         @id @default(uuid())
+  educationOrderId String
+  instrumentName   String         // SNOT-22, THI, VHI-10, HHIE-S, DHI, EAT-10
+  score            Float
+  answersJson      String
+  submittedAt      DateTime       @default(now())
+
+  educationOrder   EducationOrder @relation(fields: [educationOrderId], references: [id], onDelete: Cascade)
+}
+
+model ContentGapSignal {
+  id           String   @id @default(uuid())
+  searchQuery  String
+  userLocale   String
+  createdAt    DateTime @default(now())
+}

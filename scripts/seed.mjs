@@ -6,46 +6,13 @@ const prisma = new PrismaClient();
 async function main() {
   console.log('Seeding i-Dhanwantari ENT Patient Education database with Dhingra ENT Clinical Content...');
 
-  // Clean old records
+  // Clean old records — scoped to only the tables this script actually repopulates below.
+  // This previously deleted ~28 tables (every Topic, EducationOrder, PatientRef, consent
+  // and acknowledgement record in the database) while only ever recreating 2 of them,
+  // so running `npm run db:seed` against a populated database silently destroyed almost
+  // everything in it.
   await prisma.dhingraClinicalGuide.deleteMany();
-  await prisma.airwayEndoscopyGuide.deleteMany();
-  await prisma.cleftCareJourney.deleteMany();
-  await prisma.dysphagiaGuide.deleteMany();
-  await prisma.coughGuide.deleteMany();
-  await prisma.earInfectionGuide.deleteMany();
-  await prisma.cochlearImplantJourney.deleteMany();
-  await prisma.hearingDeviceGuide.deleteMany();
-  await prisma.tinnitusGuide.deleteMany();
-  await prisma.childMilestone.deleteMany();
-  await prisma.ototoxicDrug.deleteMany();
-  await prisma.epistaxisTrigger.deleteMany();
-  await prisma.consultAnnotation.deleteMany();
-  await prisma.patientStory.deleteMany();
-  await prisma.stomaEmergencyCard.deleteMany();
   await prisma.preventableHarmAlert.deleteMany();
-  await prisma.indiaEntitlement.deleteMany();
-  await prisma.riskDisclosure.deleteMany();
-  await prisma.decisionAid.deleteMany();
-  await prisma.skillGuide.deleteMany();
-  await prisma.contentGapSignal.deleteMany();
-  await prisma.pROMResponse.deleteMany();
-  await prisma.educationAcknowledgement.deleteMany();
-  await prisma.comprehensionResponse.deleteMany();
-  await prisma.engagementEvent.deleteMany();
-  await prisma.orderStep.deleteMany();
-  await prisma.educationOrder.deleteMany();
-  await prisma.guardianLink.deleteMany();
-  await prisma.patientRef.deleteMany();
-  await prisma.pathwayStep.deleteMany();
-  await prisma.pathwayTemplate.deleteMany();
-  await prisma.mediaObject.deleteMany();
-  await prisma.localeVariant.deleteMany();
-  await prisma.assetVersion.deleteMany();
-  await prisma.asset.deleteMany();
-  await prisma.glossaryTerm.deleteMany();
-  await prisma.clinicalCodeMap.deleteMany();
-  await prisma.topicRelation.deleteMany();
-  await prisma.topic.deleteMany();
 
   // 1. Dhingra ENT Clinical Guides
   const dhingraGuides = [

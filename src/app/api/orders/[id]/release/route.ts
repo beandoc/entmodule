@@ -6,12 +6,19 @@ export async function POST(request: Request, { params }: { params: { id: string 
     const body = await request.json();
     const { practitionerHpr } = body;
 
+    if (!practitionerHpr) {
+      return NextResponse.json(
+        { success: false, error: 'practitionerHpr is required to release a sensitive-disclosure embargo.' },
+        { status: 400 }
+      );
+    }
+
     const updatedOrder = await prisma.educationOrder.update({
       where: { id: params.id },
       data: {
         disclosureState: 'released',
         releasedAt: new Date(),
-        releasedBy: practitionerHpr || 'HPR-IN-908122'
+        releasedBy: practitionerHpr
       }
     });
 

@@ -27,6 +27,18 @@ export class ClinicalTextHardener {
   }
 
   /**
+   * Escape text destined for an HTML attribute or text node.
+   */
+  private static escapeHtml(text: string): string {
+    return text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  /**
    * Automatically scans raw clinical text for known medical terms (e.g. Tympanic Membrane, Cochlea, NPO)
    * and wraps them with interactive, highlighted glossary tags.
    */
@@ -37,14 +49,20 @@ export class ClinicalTextHardener {
 
     for (const item of glossary) {
       if (!item.term) continue;
-      
+
       // Escape special regex characters
       const escapedTerm = item.term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const regex = new RegExp(`\\b(${escapedTerm})\\b`, 'gi');
 
+      // Glossary definitions can come from author-entered content, so they must be
+      // HTML-escaped before being interpolated into the title attribute — otherwise
+      // a definition containing a `"` or `<` breaks out and injects markup/script.
+      const safeDefinition = this.escapeHtml(item.definition || '');
+      const safeSimpleText = this.escapeHtml(item.simpleText || '');
+
       processedText = processedText.replace(
         regex,
-        `<mark class="bg-sky-100 text-sky-900 px-1 py-0.5 rounded cursor-help font-semibold border-b border-sky-400" title="${item.definition} (${item.simpleText || ''})">$1</mark>`
+        `<mark class="bg-sky-100 text-sky-900 px-1 py-0.5 rounded cursor-help font-semibold border-b border-sky-400" title="${safeDefinition} (${safeSimpleText})">$1</mark>`
       );
     }
 

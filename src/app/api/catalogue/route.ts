@@ -31,12 +31,19 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { educationOrderId, structureName, annotationJson, createdById } = body;
 
+    if (!educationOrderId || !createdById) {
+      return NextResponse.json(
+        { success: false, error: 'educationOrderId and createdById are required.' },
+        { status: 400 }
+      );
+    }
+
     const annotation = await prisma.consultAnnotation.create({
       data: {
-        educationOrderId: educationOrderId || 'order-1',
+        educationOrderId,
         structureName: structureName || 'Temporal Bone 3D',
         annotationJson: JSON.stringify(annotationJson || {}),
-        createdById: createdById || 'HPR-IN-908122'
+        createdById
       }
     });
 

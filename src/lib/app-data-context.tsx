@@ -220,7 +220,9 @@ export const AppDataProvider: React.FC<{ children: React.ReactNode }> = ({ child
       const res = await fetch(`/api/orders/${orderDetails.id}/acknowledge`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ signatureText: 'Sachin Srivastava (Patient Digital Consent)' }),
+        body: JSON.stringify({
+          signatureText: `Patient MRN ${orderDetails.patientRef?.mrn} (Patient Digital Consent)`,
+        }),
       });
       const data = await res.json();
       if (data.success) {

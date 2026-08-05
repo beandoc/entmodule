@@ -46,8 +46,13 @@ export async function GET(request: Request, { params }: { params: { id: string }
       );
     }
 
-    // Fetch topics & asset variants
+    // Fetch topics & asset variants scoped to this order's pathway steps only —
+    // pulling the full catalogue here does an unbounded fetch of every topic's
+    // versions/locale variants/media objects on every order view.
+    const topicCodes = Array.from(new Set(order.orderSteps.map((s) => s.pathwayStep.topicCode)));
+
     const topics = await prisma.topic.findMany({
+      where: { code: { in: topicCodes } },
       include: {
         codeMaps: true,
         assets: {

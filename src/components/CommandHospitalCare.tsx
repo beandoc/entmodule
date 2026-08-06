@@ -200,19 +200,19 @@ export const CommandHospitalCare: React.FC = () => {
   return (
     <div className="space-y-6 page-enter">
       {/* Banner */}
-      <div className="bg-gradient-to-r from-navy-900 via-navy-800 to-teal-900 rounded-2xl p-6 md:p-8 text-white shadow-xl relative overflow-hidden">
+      <div className="bg-[#0f1d38] bg-gradient-to-r from-navy-900 via-navy-800 to-slate-900 rounded-2xl p-6 md:p-8 text-white shadow-xl relative overflow-hidden border border-navy-700">
         <div className="absolute -right-10 -bottom-10 opacity-10 pointer-events-none">
           <Building2 className="w-64 h-64 text-white" />
         </div>
         <div className="relative z-10 max-w-3xl space-y-3">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-teal-500/20 border border-teal-400/30 text-teal-200 text-xs font-semibold backdrop-blur-sm">
-            <ShieldCheck className="w-4 h-4 text-teal-300" />
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/20 border border-blue-400/40 text-blue-200 text-xs font-semibold backdrop-blur-sm">
+            <ShieldCheck className="w-4 h-4 text-blue-300" />
             {hi ? 'सशस्त्र बल चिकित्सा सेवा (AFMS) · कमांड अस्पताल' : 'Armed Forces Medical Services · Command Hospital'}
           </div>
-          <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">
+          <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight text-white drop-shadow-sm">
             {hi ? 'ईएनटी ओपीडी अपॉइंटमेंट, सर्जरी निर्देश व इमरजेंसी' : 'Command Hospital ENT Appointment Portal & Surgical Care'}
           </h1>
-          <p className="text-slate-200 text-xs md:text-sm leading-relaxed">
+          <p className="text-slate-200 text-xs md:text-sm leading-relaxed font-normal">
             {hi
               ? 'आगामी ओपीडी दौरे, निर्धारित सर्जरी के प्री-ऑप व पोस्ट-ऑप निर्देश, मंगलवार व शुक्रवार ओपीडी टोकन बुकिंग और 24/7 इमरजेंसी DMO हेल्पलाइन।'
               : 'Manage upcoming ENT visits, view pre-op & post-op surgical instructions, book Tuesday & Friday OPD tokens, and access 24/7 DMO Emergency Helpline.'}
@@ -221,18 +221,18 @@ export const CommandHospitalCare: React.FC = () => {
       </div>
 
       {/* ─── RED FLAG EMERGENCY HELPLINE BANNER ──────────────── */}
-      <div className="bg-gradient-to-r from-red-900 via-red-950 to-navy-950 rounded-2xl p-5 md:p-6 border-2 border-red-600 shadow-xl text-white space-y-4">
+      <div className="bg-[#450a0a] bg-gradient-to-r from-red-950 via-rose-950 to-slate-950 rounded-2xl p-5 md:p-6 border-2 border-red-600 shadow-2xl text-white space-y-5">
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b border-red-800/80 pb-4">
-          <div className="flex items-start gap-3">
-            <div className="p-3 bg-red-600 rounded-xl text-white shrink-0 animate-pulse shadow-md">
+          <div className="flex items-start gap-3.5">
+            <div className="p-3 bg-red-600 rounded-xl text-white shrink-0 animate-pulse shadow-lg ring-4 ring-red-600/30">
               <ShieldAlert className="w-6 h-6" />
             </div>
             <div>
-              <div className="inline-flex items-center gap-1.5 text-xs font-bold text-red-300 bg-red-950/80 border border-red-800 px-2.5 py-0.5 rounded-full mb-1">
-                <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+              <div className="inline-flex items-center gap-1.5 text-xs font-bold text-red-200 bg-red-900/70 border border-red-700/80 px-3 py-1 rounded-full mb-1.5">
+                <AlertTriangle className="w-4 h-4 text-amber-400" />
                 {hi ? 'आपातकालीन ईएनटी सहायता (24/7 Casualty)' : '24/7 ENT Emergency Triage'}
               </div>
-              <h2 className="text-lg md:text-xl font-black text-white">
+              <h2 className="text-xl md:text-2xl font-black text-white tracking-tight">
                 {hi ? 'रेड-फ्लैग आपातकालीन हेल्पलाइन एवं DMO संपर्क' : 'Red-Flag Emergency Helpline & DMO Contact'}
               </h2>
             </div>
@@ -240,25 +240,25 @@ export const CommandHospitalCare: React.FC = () => {
 
           <a
             href={`tel:${emergencyHelpline}`}
-            className="w-full md:w-auto px-6 py-3.5 bg-red-600 hover:bg-red-500 text-white font-black text-sm md:text-base rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 border border-red-400 shrink-0"
+            className="w-full md:w-auto px-6 py-3.5 bg-red-600 hover:bg-red-500 text-white font-black text-sm md:text-base rounded-xl transition-all shadow-xl flex items-center justify-center gap-2.5 border border-red-400 shrink-0 hover:scale-105"
           >
             <PhoneCall className="w-5 h-5 fill-current animate-bounce" />
             {hi ? `DMO कॉल करें: ${emergencyHelpline}` : `Call DMO / Emergency: ${emergencyHelpline}`}
           </a>
         </div>
 
-        <div className="space-y-2">
-          <span className="text-[11px] font-extrabold uppercase tracking-wider text-red-300 block">
+        <div className="space-y-3">
+          <span className="text-xs font-extrabold uppercase tracking-wider text-red-200 block">
             {hi ? 'तत्काल ध्यान देने योग्य रेड-फ्लैग लक्षण (इमरजेंसी संकेत):' : 'Immediate Red-Flag Emergency Symptoms (Call DMO Immediately):'}
           </span>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 text-xs">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-xs">
             {redFlags.map((flag, idx) => (
-              <div key={idx} className="bg-red-950/60 p-3 rounded-lg border border-red-800/60 space-y-1">
-                <p className="font-bold text-red-200 flex items-center gap-1.5">
-                  <AlertCircle className="w-3.5 h-3.5 text-red-400 shrink-0" />
+              <div key={idx} className="bg-red-900/50 hover:bg-red-900/70 p-3.5 rounded-xl border border-red-700/80 space-y-1.5 transition-colors shadow-sm">
+                <p className="font-bold text-white text-xs sm:text-sm flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
                   {flag.title}
                 </p>
-                <p className="text-[11px] text-red-300 leading-tight">{flag.desc}</p>
+                <p className="text-xs text-red-100 leading-relaxed font-normal">{flag.desc}</p>
               </div>
             ))}
           </div>

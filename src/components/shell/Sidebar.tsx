@@ -45,7 +45,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         isCollapsed ? 'w-20' : 'w-72'
       }`}
     >
-      {/* Brand Header with Command Hospital & Arogya Lekha Dual Crest */}
+      {/* Brand Header with Command Hospital & Gunjan Dual Crest */}
       <div className="flex flex-col border-b border-blue-900/60 p-4 bg-[#162d53]">
         <div className="flex items-center justify-between">
           <Link href="/" className="flex items-center gap-3 group" onClick={onClose}>
@@ -64,7 +64,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {!isCollapsed && (
               <div className="min-w-0">
                 <span className="block font-display font-extrabold text-sm tracking-tight text-white uppercase">
-                  AROGYA LEKHA
+                  GUNJAN
                 </span>
                 <span className="block text-[10px] font-semibold text-sky-300 truncate">
                   Command Hospital (SC), Pune

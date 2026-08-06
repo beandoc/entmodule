@@ -154,7 +154,7 @@ export const SymptomLog: React.FC = () => {
 
   return (
     <div className="space-y-6 pb-10 page-enter">
-      {/* Page Title Block — Arogya Lekha Pattern */}
+      {/* Page Title Block — Gunjan Pattern */}
       <div className="page-title-block">
         <div className="page-title-icon">
           <Activity className="w-6 h-6" />

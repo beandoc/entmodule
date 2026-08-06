@@ -72,7 +72,7 @@ export const Topbar: React.FC<TopbarProps> = ({
           </button>
         )}
 
-        {/* Breadcrumb Navigation (Matching Arogya Lekha Screenshot 2 & 3) */}
+        {/* Breadcrumb Navigation */}
         <div className="flex items-center gap-2 text-xs font-semibold text-slate-200">
           <span className="text-slate-300">Home</span>
           {pathname !== '/' && (
@@ -95,7 +95,7 @@ export const Topbar: React.FC<TopbarProps> = ({
           <kbd className="text-[9px] font-mono bg-blue-900 text-slate-300 px-1.5 py-0.5 rounded">⌘K</kbd>
         </button>
 
-        {/* Live Date Pill (Matching Arogya Lekha Screenshot Top Right) */}
+        {/* Live Date Pill */}
         <div className="hidden md:flex items-center gap-1.5 bg-blue-950/70 border border-blue-800/80 text-slate-200 text-xs font-semibold px-3 py-1.5 rounded-xl">
           <Calendar className="w-3.5 h-3.5 text-sky-400" />
           <span>{todayDate}</span>

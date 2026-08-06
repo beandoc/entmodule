@@ -1,7 +1,7 @@
 import {
   Compass, ClipboardList, Activity, ClipboardCheck, Users, BookOpenText,
   LifeBuoy, Podcast, Download, ShieldAlert, Award, ShieldCheck,
-  Stethoscope, FileText, BarChart3,
+  Stethoscope, FileText, BarChart3, Building2, RotateCcw, Wind, Ear,
 } from 'lucide-react';
 
 export interface NavItem {
@@ -41,8 +41,8 @@ export const navGroups: NavGroup[] = [
   },
   {
     id: 'my-care',
-    title: 'My Care',
-    titleHi: 'मेरी देखभाल',
+    title: 'My Care & Rehab',
+    titleHi: 'मेरी देखभाल और पुनर्वास',
     items: [
       {
         href: '/care-plan',
@@ -61,6 +61,33 @@ export const navGroups: NavGroup[] = [
         descriptionHi: 'दैनिक दर्द और सुनने की स्थिति दर्ज करें',
         icon: Activity,
         keywords: 'pain diary tracker log symptoms',
+      },
+      {
+        href: '/rehab/vestibular',
+        label: 'Vestibular Rehab',
+        labelHi: 'वेस्टिबुलर पुनर्वास',
+        description: 'Guided Vertigo, BPPV & balance exercises',
+        descriptionHi: 'चक्कर और बीपीपीवी के लिए चरण-दर-चरण अभ्यास',
+        icon: RotateCcw,
+        keywords: 'vertigo epley bppv balance dizziness cawthorne gaze',
+      },
+      {
+        href: '/rehab/sinus',
+        label: 'Sinus Irrigation',
+        labelHi: 'साइनस धुलाई सहायक',
+        description: 'Saline rinse timer & spray coach',
+        descriptionHi: 'नेज़ल सेलाइन रिंस टाइमर और स्प्रे गाइड',
+        icon: Wind,
+        keywords: 'sinus rinse saline irrigation snot spray fess',
+      },
+      {
+        href: '/rehab/otology',
+        label: 'Ear Precaution Tracker',
+        labelHi: 'कान सुरक्षा ट्रैकर',
+        description: 'Water protection & post-op milestones',
+        descriptionHi: 'पानी से सुरक्षा और कान की देखभाल',
+        icon: Ear,
+        keywords: 'ear pack water precaution tympanoplasty audiogram otology',
       },
       {
         href: '/self-assessment',
@@ -127,8 +154,8 @@ export const navGroups: NavGroup[] = [
   },
   {
     id: 'support',
-    title: 'Support',
-    titleHi: 'सहायता',
+    title: 'Support & Hospital Services',
+    titleHi: 'सहायता और अस्पताल सेवाएं',
     items: [
       {
         href: '/emergency',
@@ -142,12 +169,12 @@ export const navGroups: NavGroup[] = [
       },
       {
         href: '/schemes',
-        label: 'India Schemes',
-        labelHi: 'भारत योजनाएं',
-        description: 'Ayushman Bharat, ADIP & UDID guidance',
-        descriptionHi: 'आयुष्मान भारत, एडीआईपी और यूडीआईडी मार्गदर्शन',
-        icon: Award,
-        keywords: 'entitlements pmjay financial assistance',
+        label: 'Command Hospital Care',
+        labelHi: 'कमांड अस्पताल सेवाएं',
+        description: 'Tue/Fri OPDs, OT Roster, Facilities & OPD Token Portal',
+        descriptionHi: 'मंगलवार/शुक्रवार ओपीडी, ओटी रोस्टर व टोकन पोर्टल',
+        icon: Building2,
+        keywords: 'command hospital afms echs opd tuesday friday ot schedule appointment booking token portal facilities',
       },
       {
         href: '/consent',

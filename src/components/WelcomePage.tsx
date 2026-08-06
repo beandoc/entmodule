@@ -117,13 +117,12 @@ export const WelcomePage: React.FC = () => {
 
       {/* ─── HERO CARD ────────────────────────────────────────── */}
       <section className="card overflow-hidden card-animated">
-        {/* Navy breadcrumb-style header bar */}
         <div className="card-navy-header">
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-sky-400 animate-pulse" />
             <span>{hi ? 'मुख्य पृष्ठ' : 'HOME'}</span>
           </div>
-          <span>{todayDate}</span>
+          <span>{hi ? 'रोग़ी पोर्टल' : 'PATIENT CARE PORTAL'}</span>
         </div>
 
         {/* Split layout */}

@@ -1,7 +1,7 @@
 import {
   Compass, ClipboardList, Activity, ClipboardCheck, Users, BookOpenText,
   LifeBuoy, Podcast, Download, ShieldAlert, Award, ShieldCheck,
-  Stethoscope, FileText, BarChart3, Building2, RotateCcw, Wind, Ear,
+  Stethoscope, FileText, BarChart3, Building2, RotateCcw, Wind, Ear, AudioWaveform, Eye,
 } from 'lucide-react';
 
 export interface NavItem {
@@ -66,10 +66,19 @@ export const navGroups: NavGroup[] = [
         href: '/rehab/vestibular',
         label: 'Vestibular Rehab',
         labelHi: 'वेस्टिबुलर पुनर्वास',
-        description: 'Guided Vertigo, BPPV & balance exercises',
-        descriptionHi: 'चक्कर और बीपीपीवी के लिए चरण-दर-चरण अभ्यास',
+        description: 'Camera gaze-stabilisation coach, timed Epley & Brandt-Daroff, balance drills, DHI-25',
+        descriptionHi: 'कैमरा गेज़-स्टेबिलाइजेशन कोच, समयबद्ध एपली व ब्रांट-डैरोफ, संतुलन अभ्यास, DHI-25',
         icon: RotateCcw,
-        keywords: 'vertigo epley bppv balance dizziness cawthorne gaze',
+        keywords: 'vertigo epley brandt daroff bppv balance dizziness gaze stabilisation vor habituation dhi handicap inventory mediapipe pose neck landmark motion tracking camera coach',
+      },
+      {
+        href: '/rehab/vestibular/analytics',
+        label: 'Gaze Analytics Engine',
+        labelHi: 'गेज़ एनालिटिक्स इंजन',
+        description: 'AI iris tracking · VOR gain · fixation & saccade analysis · nystagmus heuristic',
+        descriptionHi: 'AI आईरिस ट्रैकिंग · VOR लाभ · फिक्सेशन और सैकेड विश्लेषण · निस्टैगमस',
+        icon: Eye,
+        keywords: 'gaze eye tracking iris vor saccade fixation nystagmus analytics vestibular rehab ai engine',
       },
       {
         href: '/rehab/sinus',
@@ -88,6 +97,15 @@ export const navGroups: NavGroup[] = [
         descriptionHi: 'पानी से सुरक्षा और कान की देखभाल',
         icon: Ear,
         keywords: 'ear pack water precaution tympanoplasty audiogram otology',
+      },
+      {
+        href: '/rehab/tinnitus',
+        label: 'Tinnitus Relief',
+        labelHi: 'टिनिटस राहत',
+        description: 'Pitch match & ACRN sound therapy player',
+        descriptionHi: 'पिच मिलान और ACRN साउंड थेरेपी',
+        icon: AudioWaveform,
+        keywords: 'tinnitus ringing acrn masking notched sound therapy pitch match thi loudness habituation trt',
       },
       {
         href: '/self-assessment',

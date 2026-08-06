@@ -10,7 +10,9 @@
     "lint": "next lint",
     "db:push": "prisma db push",
     "db:seed": "node scripts/seed.mjs",
-    "test:interop": "node scripts/test-interop.mjs"
+    "test:interop": "node scripts/test-interop.mjs",
+    "test:tinnitus": "node scripts/test-tinnitus.mjs",
+    "test:vestibular": "node scripts/test-vestibular.mjs"
   },
   "dependencies": {
     "@prisma/client": "^5.10.0",

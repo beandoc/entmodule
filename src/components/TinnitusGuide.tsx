@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Volume2, ShieldAlert, CheckCircle2, HelpCircle, Activity, Brain, Ear, Stethoscope, Sparkles, AlertTriangle, Moon, HeartHandshake } from 'lucide-react';
+import Link from 'next/link';
+import { Volume2, ShieldAlert, CheckCircle2, HelpCircle, Activity, Brain, Ear, Stethoscope, Sparkles, AlertTriangle, Moon, HeartHandshake, AudioWaveform, ArrowRight } from 'lucide-react';
 import { useAppData } from '@/lib/app-data-context';
 
 export const TinnitusGuide: React.FC = () => {
@@ -242,6 +243,31 @@ export const TinnitusGuide: React.FC = () => {
       {/* Tab 5: Treatment */}
       {activeTab === 'treatment' && (
         <div className="space-y-6">
+          {/* Hand-off from education to the interactive sound therapy player */}
+          <Link
+            href="/rehab/tinnitus"
+            className="block bg-gradient-to-r from-navy-900 via-navy-800 to-[#2b518c] rounded-3xl p-6 shadow-sm text-white hover:shadow-lg transition-shadow"
+          >
+            <div className="flex items-start gap-4">
+              <div className="w-11 h-11 rounded-2xl bg-white/10 border border-white/20 flex items-center justify-center shrink-0">
+                <AudioWaveform className="w-5 h-5" />
+              </div>
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="font-display font-bold text-lg">
+                    {hi ? 'टिनिटस राहत स्टूडियो खोलें' : 'Open the Tinnitus Relief Studio'}
+                  </h3>
+                  <ArrowRight className="w-4 h-4" />
+                </div>
+                <p className="text-xs text-navy-100 leading-relaxed">
+                  {hi
+                    ? 'यहाँ बताई गई साउंड थेरेपी को अभी आज़माएं — अपनी टिनिटस पिच खोजें या ऑडियोलॉजिस्ट का कोड डालें, फिर हेडफोन पर ACRN, नॉच्ड या ब्रॉडबैंड मास्किंग चलाएं।'
+                    : 'Put the sound therapy described here into practice — match your tinnitus pitch or enter your audiologist code, then play ACRN, notched or broadband masking through your headphones.'}
+                </p>
+              </div>
+            </div>
+          </Link>
+
           <div className="bg-white dark:bg-ink-900 border border-slate-200 dark:border-ink-800 rounded-3xl p-6 shadow-sm space-y-5">
             <h3 className="font-display font-bold text-lg text-slate-900 dark:text-white">
               {hi ? 'टीनाइटस के उपचार, थेरेपी व लाइफस्टाइल प्रबंधन' : 'Effective Tinnitus Treatments & Sound Management'}

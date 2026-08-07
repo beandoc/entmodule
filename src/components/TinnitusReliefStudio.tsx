@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   AudioWaveform, Play, Pause, Headphones, Ear, Activity, ShieldAlert, AlertTriangle,
@@ -61,26 +61,33 @@ const RangeRow: React.FC<{
   onChange: (v: number) => void;
   hint?: string;
   accent?: string;
-}> = ({ label, readout, min, max, step = 1, value, onChange, hint, accent = 'accent-navy-700' }) => (
-  <div className="space-y-2">
-    <div className="flex items-center justify-between gap-3">
-      <label className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">{label}</label>
-      <span className="text-xs font-mono font-bold px-2.5 py-0.5 rounded-full bg-navy-50 text-navy-700 border border-navy-200 dark:bg-ink-900 dark:text-navy-200 dark:border-ink-700">
-        {readout}
-      </span>
+  ariaLabel?: string;
+}> = ({ label, readout, min, max, step = 1, value, onChange, hint, accent = 'accent-navy-700', ariaLabel }) => {
+  const id = useId();
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-3">
+        <label htmlFor={id} className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">{label}</label>
+        <span className="text-xs font-mono font-bold px-2.5 py-0.5 rounded-full bg-navy-50 text-navy-700 border border-navy-200 dark:bg-ink-900 dark:text-navy-200 dark:border-ink-700">
+          {readout}
+        </span>
+      </div>
+      <input
+        id={id}
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        aria-label={ariaLabel ?? label}
+        aria-valuetext={readout}
+        className={`w-full h-2 rounded-lg bg-slate-200 dark:bg-ink-800 cursor-pointer ${accent}`}
+      />
+      {hint && <p className="text-[11px] text-slate-400 leading-relaxed">{hint}</p>}
     </div>
-    <input
-      type="range"
-      min={min}
-      max={max}
-      step={step}
-      value={value}
-      onChange={(e) => onChange(Number(e.target.value))}
-      className={`w-full h-2 rounded-lg bg-slate-200 dark:bg-ink-800 cursor-pointer ${accent}`}
-    />
-    {hint && <p className="text-[11px] text-slate-400 leading-relaxed">{hint}</p>}
-  </div>
-);
+  );
+};
 
 export const TinnitusReliefStudio: React.FC = () => {
   const { locale } = useAppData();
@@ -93,6 +100,14 @@ export const TinnitusReliefStudio: React.FC = () => {
   const [isPulsatile, setIsPulsatile] = useState(false);
   const [hasSuddenLoss, setHasSuddenLoss] = useState(false);
   const [hasVertigo, setHasVertigo] = useState(false);
+  /** Patient has explicitly acknowledged the red-flag escalation before proceeding. */
+  const [triageAck, setTriageAck] = useState(false);
+  /**
+   * Frequency captured on entering the octave-confusion step. The three octave
+   * choices are derived from this anchor, not from the live `frequency` state, so
+   * clicking an option cannot shift the choices on the next click.
+   */
+  const [octaveBase, setOctaveBase] = useState<number | null>(null);
 
   const [frequency, setFrequency] = useState(8000);
   const [levelDb, setLevelDb] = useState(AUDIO_LIMITS.DEFAULT_LEVEL_DB);
@@ -115,6 +130,15 @@ export const TinnitusReliefStudio: React.FC = () => {
 
   const [sessionMinutes, setSessionMinutes] = useState(AUDIO_LIMITS.DEFAULT_SESSION_MINUTES);
   const [remainingSeconds, setRemainingSeconds] = useState(AUDIO_LIMITS.DEFAULT_SESSION_MINUTES * 60);
+  /**
+   * Absolute ms timestamp at which the current therapy session will complete.
+   * Stored as a ref (not state) so the timer interval does not rebuild every tick.
+   */
+  const sessionDeadlineRef = useRef<number | null>(null);
+  /** Timestamp when the most recent therapy session started, for accurate minutesRun. */
+  const sessionStartRef = useRef<number | null>(null);
+  /** Handle for the sessionSaved flash timeout, cleared on unmount. */
+  const savedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [loudnessBefore, setLoudnessBefore] = useState(6);
   const [loudnessAfter, setLoudnessAfter] = useState(4);
@@ -167,6 +191,11 @@ export const TinnitusReliefStudio: React.FC = () => {
       window.removeEventListener('pagehide', stopAll);
       engineRef.current?.dispose();
       engineRef.current = null;
+      // Clear the saved-flash timeout so it cannot fire after unmount.
+      if (savedTimeoutRef.current !== null) {
+        clearTimeout(savedTimeoutRef.current);
+        savedTimeoutRef.current = null;
+      }
     };
   }, [stopAll]);
 
@@ -175,35 +204,51 @@ export const TinnitusReliefStudio: React.FC = () => {
   useEffect(() => { engineRef.current?.setLevelDb(levelDb); }, [levelDb]);
   useEffect(() => { engineRef.current?.setPan(pan); }, [pan]);
   useEffect(() => { engineRef.current?.setNoiseColor(noiseColor); }, [noiseColor]);
+  useEffect(() => { engineRef.current?.setSoundscape(soundscape); }, [soundscape]);
   useEffect(() => { engineRef.current?.setAcrnOptions({ loopRepeat, restLength }); }, [loopRepeat, restLength]);
 
-  // Session countdown — announces completion the way the other rehab timers do.
+  // Session countdown — deadline-based so it does not drift over a 60-minute session.
+  // The interval reads the deadline timestamp on each tick rather than decrementing state,
+  // which avoids the effect teardown / rebuild every second that causes measurable drift.
   const isTherapyPlaying = playingMode !== 'idle' && playingMode !== 'pitch';
   useEffect(() => {
     if (!isTherapyPlaying) return;
-    if (remainingSeconds <= 0) {
-      stopAll();
-      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-        const msg = new SpeechSynthesisUtterance(
-          hi ? 'साउंड थेरेपी सत्र पूरा हुआ' : 'Sound therapy session complete'
-        );
-        msg.lang = hi ? 'hi-IN' : 'en-US';
-        window.speechSynthesis.speak(msg);
+    const id = setInterval(() => {
+      if (sessionDeadlineRef.current === null) return;
+      const secs = Math.round((sessionDeadlineRef.current - Date.now()) / 1000);
+      if (secs <= 0) {
+        setRemainingSeconds(0);
+        clearInterval(id);
+        stopAll();
+        sessionDeadlineRef.current = null;
+        if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+          const msg = new SpeechSynthesisUtterance(
+            hi ? 'साउंड थेरेपी सत्र पूरा हुआ' : 'Sound therapy session complete'
+          );
+          msg.lang = hi ? 'hi-IN' : 'en-US';
+          window.speechSynthesis.speak(msg);
+        }
+      } else {
+        setRemainingSeconds(secs);
       }
-      return;
-    }
-    const id = setInterval(() => setRemainingSeconds((prev) => prev - 1), 1000);
+    }, 1000);
     return () => clearInterval(id);
-  }, [isTherapyPlaying, remainingSeconds, hi, stopAll]);
+  // Only depend on isTherapyPlaying and stable callbacks — not on remainingSeconds.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isTherapyPlaying, hi, stopAll]);
 
   useEffect(() => { engineRef.current?.setEqGains(eqGains); }, [eqGains]);
 
   const play = async (mode: Exclude<EngineMode, 'idle'>) => {
     const engine = getEngine();
+    // Binaural beats require both oscillators to be hard-panned L/R internally.
+    // A non-zero pan on the master StereoPanner destroys the interaural phase difference,
+    // collapsing the beat. Always pass pan=0 for binaural mode.
+    const effectivePan = mode === 'binaural' ? 0 : pan;
     await engine.start(mode, {
       frequency,
       levelDb,
-      pan,
+      pan: effectivePan,
       noiseColor,
       bgNoiseColor,
       soundscape,
@@ -221,7 +266,11 @@ export const TinnitusReliefStudio: React.FC = () => {
 
   const toggleTherapy = async () => {
     if (isTherapyPlaying) { stopAll(); return; }
+    // Set deadline before starting so the timer effect can read it immediately.
+    const totalMs = (remainingSeconds > 0 ? remainingSeconds : sessionMinutes * 60) * 1000;
+    sessionDeadlineRef.current = Date.now() + totalMs;
     if (remainingSeconds <= 0) setRemainingSeconds(sessionMinutes * 60);
+    sessionStartRef.current = Date.now();
     await play(ENGINE_TO_MODE[engineChoice]);
   };
 
@@ -287,7 +336,12 @@ export const TinnitusReliefStudio: React.FC = () => {
   };
 
   const handleSaveSession = () => {
-    const minutesRun = Math.max(1, Math.round((sessionMinutes * 60 - remainingSeconds) / 60));
+    // Use the wall-clock start timestamp if available for accuracy.
+    // Fall back to the remaining-seconds calculation, but floor at 0 (not 1)
+    // so a session that never actually played does not record false minutes.
+    const minutesRun = sessionStartRef.current !== null
+      ? Math.max(0, Math.round((Date.now() - sessionStartRef.current) / 60000))
+      : Math.max(0, Math.round((sessionMinutes * 60 - remainingSeconds) / 60));
     const session: TinnitusSession = {
       id: crypto.randomUUID(),
       date: new Date().toISOString().slice(0, 10),
@@ -301,7 +355,11 @@ export const TinnitusReliefStudio: React.FC = () => {
     };
     setSessions(saveSession(session));
     setSessionSaved(true);
-    setTimeout(() => setSessionSaved(false), 2500);
+    if (savedTimeoutRef.current !== null) clearTimeout(savedTimeoutRef.current);
+    savedTimeoutRef.current = setTimeout(() => {
+      setSessionSaved(false);
+      savedTimeoutRef.current = null;
+    }, 2500);
   };
 
   const weeklyMinutes = useMemo(() => {
@@ -373,13 +431,16 @@ export const TinnitusReliefStudio: React.FC = () => {
       </div>
 
       {/* Tabs */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div role="tablist" aria-label={hi ? 'मुख्य अनुभाग' : 'Main sections'} className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {tabs.map((tab) => {
           const active = activeTab === tab.id;
           const Icon = tab.icon;
           return (
             <button
               key={tab.id}
+              role="tab"
+              aria-selected={active}
+              aria-controls={`tabpanel-${tab.id}`}
               onClick={() => setActiveTab(tab.id)}
               className={`p-4 rounded-xl border text-left transition-all space-y-2 ${
                 active
@@ -488,14 +549,15 @@ export const TinnitusReliefStudio: React.FC = () => {
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                     <div className="p-3 rounded-xl border border-slate-200 dark:border-ink-800 bg-white dark:bg-ink-900 space-y-2">
-                      <label className="font-bold block text-slate-700 dark:text-slate-300">
+                      <span id="triage-location-label" className="font-bold block text-slate-700 dark:text-slate-300">
                         {hi ? 'ध्वनि किस कान में है?' : 'Tinnitus Location:'}
-                      </label>
-                      <div className="flex gap-2">
+                      </span>
+                      <div role="group" aria-labelledby="triage-location-label" className="flex gap-2">
                         {(['both', 'left', 'right'] as const).map((side) => (
                           <button
                             key={side}
                             onClick={() => setTriageSide(side)}
+                            aria-pressed={triageSide === side}
                             className={`flex-1 py-1.5 rounded-lg font-semibold border text-center transition-all ${
                               triageSide === side
                                 ? 'bg-navy-700 text-white border-navy-700'
@@ -509,12 +571,13 @@ export const TinnitusReliefStudio: React.FC = () => {
                     </div>
 
                     <div className="p-3 rounded-xl border border-slate-200 dark:border-ink-800 bg-white dark:bg-ink-900 space-y-2">
-                      <label className="font-bold block text-slate-700 dark:text-slate-300">
+                      <span id="triage-pulsatile-label" className="font-bold block text-slate-700 dark:text-slate-300">
                         {hi ? 'क्या आवाज़ दिल की धड़कन जैसी है?' : 'Pulsatile (Heartbeat rhythm)?'}
-                      </label>
-                      <div className="flex gap-2">
+                      </span>
+                      <div role="group" aria-labelledby="triage-pulsatile-label" className="flex gap-2">
                         <button
                           onClick={() => setIsPulsatile(true)}
+                          aria-pressed={isPulsatile}
                           className={`flex-1 py-1.5 rounded-lg font-semibold border text-center transition-all ${
                             isPulsatile ? 'bg-amber-600 text-white border-amber-600' : 'bg-slate-50 dark:bg-ink-950 border-slate-200 text-slate-700'
                           }`}
@@ -523,6 +586,7 @@ export const TinnitusReliefStudio: React.FC = () => {
                         </button>
                         <button
                           onClick={() => setIsPulsatile(false)}
+                          aria-pressed={!isPulsatile}
                           className={`flex-1 py-1.5 rounded-lg font-semibold border text-center transition-all ${
                             !isPulsatile ? 'bg-navy-700 text-white border-navy-700' : 'bg-slate-50 dark:bg-ink-950 border-slate-200 text-slate-700'
                           }`}
@@ -533,12 +597,13 @@ export const TinnitusReliefStudio: React.FC = () => {
                     </div>
 
                     <div className="p-3 rounded-xl border border-slate-200 dark:border-ink-800 bg-white dark:bg-ink-900 space-y-2">
-                      <label className="font-bold block text-slate-700 dark:text-slate-300">
+                      <span id="triage-suddenloss-label" className="font-bold block text-slate-700 dark:text-slate-300">
                         {hi ? '72 घंटे में अचानक सुनने में कमी?' : 'Sudden hearing loss (<72 hrs)?'}
-                      </label>
-                      <div className="flex gap-2">
+                      </span>
+                      <div role="group" aria-labelledby="triage-suddenloss-label" className="flex gap-2">
                         <button
-                          onClick={() => setHasSuddenLoss(true)}
+                          onClick={() => { setHasSuddenLoss(true); setTriageAck(false); }}
+                          aria-pressed={hasSuddenLoss}
                           className={`flex-1 py-1.5 rounded-lg font-semibold border text-center transition-all ${
                             hasSuddenLoss ? 'bg-red-600 text-white border-red-600' : 'bg-slate-50 dark:bg-ink-950 border-slate-200 text-slate-700'
                           }`}
@@ -547,6 +612,7 @@ export const TinnitusReliefStudio: React.FC = () => {
                         </button>
                         <button
                           onClick={() => setHasSuddenLoss(false)}
+                          aria-pressed={!hasSuddenLoss}
                           className={`flex-1 py-1.5 rounded-lg font-semibold border text-center transition-all ${
                             !hasSuddenLoss ? 'bg-navy-700 text-white border-navy-700' : 'bg-slate-50 dark:bg-ink-950 border-slate-200 text-slate-700'
                           }`}
@@ -557,12 +623,13 @@ export const TinnitusReliefStudio: React.FC = () => {
                     </div>
 
                     <div className="p-3 rounded-xl border border-slate-200 dark:border-ink-800 bg-white dark:bg-ink-900 space-y-2">
-                      <label className="font-bold block text-slate-700 dark:text-slate-300">
-                        {hi ? 'चक्कर या सन्तुलन बिगड़ना?' : 'Associated Dizziness / Vertigo?'}
-                      </label>
-                      <div className="flex gap-2">
+                      <span id="triage-vertigo-label" className="font-bold block text-slate-700 dark:text-slate-300">
+                        {hi ? 'चक्कर या सन्तुलन बिगड़ना?' : 'Associated Dizziness / Vertigo?'}
+                      </span>
+                      <div role="group" aria-labelledby="triage-vertigo-label" className="flex gap-2">
                         <button
-                          onClick={() => setHasVertigo(true)}
+                          onClick={() => { setHasVertigo(true); setTriageAck(false); }}
+                          aria-pressed={hasVertigo}
                           className={`flex-1 py-1.5 rounded-lg font-semibold border text-center transition-all ${
                             hasVertigo ? 'bg-amber-600 text-white border-amber-600' : 'bg-slate-50 dark:bg-ink-950 border-slate-200 text-slate-700'
                           }`}
@@ -571,6 +638,7 @@ export const TinnitusReliefStudio: React.FC = () => {
                         </button>
                         <button
                           onClick={() => setHasVertigo(false)}
+                          aria-pressed={!hasVertigo}
                           className={`flex-1 py-1.5 rounded-lg font-semibold border text-center transition-all ${
                             !hasVertigo ? 'bg-navy-700 text-white border-navy-700' : 'bg-slate-50 dark:bg-ink-950 border-slate-200 text-slate-700'
                           }`}
@@ -581,21 +649,62 @@ export const TinnitusReliefStudio: React.FC = () => {
                     </div>
                   </div>
 
-                  {(triageSide !== 'both' || isPulsatile || hasSuddenLoss || hasVertigo) && (
+                  {/* ---- Red-flag escalation (sudden loss or pulsatile) ---- */}
+                  {(isPulsatile || hasSuddenLoss) && (
+                    <div className="p-4 rounded-xl bg-red-50 dark:bg-red-950/40 border-2 border-red-400 dark:border-red-700 text-red-900 dark:text-red-200 text-xs space-y-3">
+                      <p className="font-bold flex items-center gap-1.5 text-sm">
+                        <ShieldAlert className="w-5 h-5 text-red-600 shrink-0" />
+                        {hi ? 'तत्काल ईएनटी जांच आवश्यक' : 'Urgent ENT Review Required'}
+                      </p>
+                      {hasSuddenLoss && (
+                        <p className="leading-relaxed">
+                          {hi
+                            ? 'अचानक श्रवण हानि एक आपातकालीन स्थिति है — स्टेरॉयड उपचार की सफलता 72 घंटे की खिड़की पर निर्भर करती है। अभी ईएनटी विभाग, कक्ष 108 से संपर्क करें। स्व-निर्देशित साउंड थेरेपी शुरू करने से पहले ईएनटी से परामर्श आवश्यक है।'
+                            : 'Sudden sensorineural hearing loss is a medical emergency — steroid therapy is most effective within a 72-hour window. Contact the ENT department (Room 108) immediately. Self-directed sound therapy must not be started before an ENT assessment.'}
+                        </p>
+                      )}
+                      {isPulsatile && !hasSuddenLoss && (
+                        <p className="leading-relaxed">
+                          {hi
+                            ? 'पल्सेटाइल टिनिटस (दिल की धड़कन जैसी आवाज़) के लिए ड्यूरल AV फिस्टुला, कैरोटिड स्टेनोसिस या ICP वृद्धि को रद्द करने के लिए तुरंत ईएनटी और इमेजिंग जांच कराएं।'
+                            : 'Pulsatile tinnitus warrants urgent ENT referral and imaging to exclude dural AV fistula, carotid stenosis, or raised intracranial pressure.'}
+                        </p>
+                      )}
+                      <label className="flex items-start gap-2 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={triageAck}
+                          onChange={(e) => setTriageAck(e.target.checked)}
+                          className="mt-0.5 accent-red-600"
+                          aria-label={hi ? 'मैंने समझ लिया और ईएनटी से संपर्क किया है' : 'I understand and have contacted ENT / will do so before starting therapy'}
+                        />
+                        <span className="leading-relaxed">
+                          {hi
+                            ? 'मैंने यह जानकारी पढ़ ली है और ईएनटी विभाग से संपर्क करने / करवाने की प्रक्रिया में हूँ। मैं समझता/समझती हूँ कि यह थेरेपी चिकित्सकीय मूल्यांकन का विकल्प नहीं है।'
+                            : 'I have read this information and have contacted ENT, or will do so before starting therapy. I understand this app is not a substitute for clinical evaluation.'}
+                        </span>
+                      </label>
+                    </div>
+                  )}
+
+                  {/* ---- Amber advisory (unilateral / vertigo only, no red flag) ---- */}
+                  {!isPulsatile && !hasSuddenLoss && (triageSide !== 'both' || hasVertigo) && (
                     <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200 text-xs space-y-1">
                       <p className="font-bold flex items-center gap-1.5">
                         <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
                         {hi ? 'ईएनटी परामर्श सलाह:' : 'ENT Referral Recommended:'}
                       </p>
                       <p className="leading-relaxed">
-                        {isPulsatile || hasSuddenLoss
-                          ? (hi ? 'अचानक सुनवाई हानि या पल्सटाइल टिनिटस के लिए तुरंत ईएनटी डॉक्टर से जांच कराएं।' : 'Urgent ENT consultation recommended for sudden hearing loss or pulsatile tinnitus.')
-                          : (hi ? 'एकतरफ़ा टिनिटस या चक्कर के लक्षणों के लिए ईएनटी ऑडियोलॉजी जांच कराने की सलाह दी जाती है।' : 'Unilateral tinnitus or dizziness warrants clinical ENT & audiometric assessment.')}
+                        {hi ? 'एकतरफ़ा टिनिटस या चक्कर के लक्षणों के लिए ईएनटी ऑडियोलॉजी जांच कराने की सलाह दी जाती है।' : 'Unilateral tinnitus or dizziness warrants clinical ENT & audiometric assessment.'}
                       </p>
                     </div>
                   )}
 
-                  <button onClick={() => setSetupStep('headphones')} className="btn-navy w-full inline-flex items-center justify-center gap-2">
+                  <button
+                    onClick={() => setSetupStep('headphones')}
+                    disabled={(isPulsatile || hasSuddenLoss) && !triageAck}
+                    className="btn-navy w-full inline-flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
                     {hi ? 'आगे बढ़ें — हेडफोन जांचें' : 'Continue — Test Headphones'}
                     <ArrowRight className="w-4 h-4" />
                   </button>
@@ -674,7 +783,15 @@ export const TinnitusReliefStudio: React.FC = () => {
                       {playingMode === 'pitch' ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 fill-current" />}
                       {playingMode === 'pitch' ? (hi ? 'टोन रोकें' : 'Stop tone') : (hi ? 'टोन चलाएं' : 'Play tone')}
                     </button>
-                    <button onClick={() => setSetupStep('octave')} className="btn-outline flex-1">
+                    <button
+                      onClick={() => {
+                        // Anchor the octave base NOW so the confusion-check options
+                        // stay fixed regardless of what the patient clicks next.
+                        setOctaveBase(frequency);
+                        setSetupStep('octave');
+                      }}
+                      className="btn-outline flex-1"
+                    >
                       {hi ? 'यह मेल खाता है — आगे' : 'This matches — next'}
                     </button>
                   </div>
@@ -688,65 +805,73 @@ export const TinnitusReliefStudio: React.FC = () => {
                     <p className="text-xs text-amber-900 dark:text-amber-200 leading-relaxed">
                       {hi
                         ? 'ऑक्टेव भ्रम परीक्षण (Octave Confusion Check): लोग अक्सर वास्तविक पिच से एक ऑक्टेव ऊपर या नीचे का टोन चुन लेते हैं। नीचे दिए 3 टोन सुनकर पुष्टि करें कि कौन सी पिच आपके टिनिटस से सबसे बेहतर मेल खाती है:'
-                        : 'Octave Confusion Challenge: People often misidentify their pitch by one octave. Listen to all 3 choices below to confirm your true match:'}
+                        : 'Octave Confusion Challenge: People often misidentify their pitch by one octave. Listen to all 3 choices and press \"This matches\" only on the one that best matches your tinnitus:'}
                     </p>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <button
-                      onClick={() => previewFrequency(Math.round(frequency / 2))}
-                      className={`p-4 rounded-xl border text-left transition-all ${
-                        Math.abs(frequency - Math.round(frequency / 2)) < 1
-                          ? 'border-navy-700 bg-navy-50 dark:bg-navy-950/60 ring-2 ring-navy-700/20'
-                          : 'border-slate-200 dark:border-ink-800 bg-white dark:bg-ink-900 hover:border-navy-300'
-                      }`}
-                    >
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-                        {hi ? 'विकल्प 1 (एक ऑक्टेव नीचे)' : 'Option 1 (-1 Octave)'}
-                      </span>
-                      <span className="font-mono font-bold text-lg text-navy-800 dark:text-navy-200">
-                        {Math.round(frequency / 2)} Hz
-                      </span>
-                    </button>
 
-                    <button
-                      onClick={() => previewFrequency(frequency)}
-                      className={`p-4 rounded-xl border text-left transition-all ${
-                        true
-                          ? 'border-navy-700 bg-navy-50 dark:bg-navy-950/60 ring-2 ring-navy-700/20'
-                          : 'border-slate-200 dark:border-ink-800 bg-white dark:bg-ink-900 hover:border-navy-300'
-                      }`}
-                    >
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-navy-600 dark:text-navy-300 block">
-                        {hi ? 'विकल्प 2 (वर्तमान चयन)' : 'Option 2 (Current Pitch)'}
-                      </span>
-                      <span className="font-mono font-bold text-lg text-navy-900 dark:text-navy-100">
-                        {frequency} Hz
-                      </span>
-                    </button>
+                  {/* Derive all three choices from the anchored base, not from live frequency.
+                      Without anchoring, clicking option 1 would halve `frequency`, making
+                      all three options shift — the patient could spiral an octave down. */}
+                  {(() => {
+                    const base = octaveBase ?? frequency;
+                    const opts = [
+                      { label: hi ? 'विकल्प 1 (एक ऑक्टेव नीचे)' : 'Option 1 (−1 Octave)', hz: clampFrequency(Math.round(base / 2)) },
+                      { label: hi ? 'विकल्प 2 (वर्तमान पिच)' : 'Option 2 (Current Pitch)', hz: clampFrequency(Math.round(base)) },
+                      { label: hi ? 'विकल्प 3 (एक ऑक्टेव ऊपर)' : 'Option 3 (+1 Octave)', hz: clampFrequency(Math.round(base * 2)) },
+                    ];
+                    return (
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        {opts.map((opt) => {
+                          // Preview plays the tone without committing; isSelected tracks which
+                          // one the user is currently hearing.
+                          const isSelected = Math.abs(frequency - opt.hz) < 1;
+                          return (
+                            <div key={opt.hz} className="space-y-2">
+                              <button
+                                onClick={async () => {
+                                  // Preview only — do not commit to frequency yet.
+                                  const eng = getEngine();
+                                  await eng.start('pitch', { frequency: opt.hz, levelDb, pan });
+                                  setPlayingMode('pitch');
+                                }}
+                                className={`w-full p-4 rounded-xl border text-left transition-all ${
+                                  isSelected
+                                    ? 'border-navy-700 bg-navy-50 dark:bg-navy-950/60 ring-2 ring-navy-700/20'
+                                    : 'border-slate-200 dark:border-ink-800 bg-white dark:bg-ink-900 hover:border-navy-300'
+                                }`}
+                              >
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                                  {opt.label}
+                                </span>
+                                <span className="font-mono font-bold text-lg text-navy-800 dark:text-navy-200 block">
+                                  {opt.hz} Hz
+                                </span>
+                                <span className="text-[10px] text-slate-400">
+                                  {hi ? 'सुनने के लिए दबाएं' : 'Tap to preview'}
+                                </span>
+                              </button>
+                              {/* Explicit commit — only this button sets the therapy frequency */}
+                              <button
+                                onClick={() => {
+                                  stopAll();
+                                  setFrequency(opt.hz);
+                                  setSetupStep('level');
+                                }}
+                                className="w-full py-1.5 rounded-lg text-xs font-bold border border-navy-300 bg-navy-50 dark:bg-navy-900 dark:border-navy-700 text-navy-700 dark:text-navy-200 hover:bg-navy-100 dark:hover:bg-navy-800 transition-colors"
+                              >
+                                {hi ? 'यह मेल खाता है ✓' : 'This matches ✓'}
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
 
-                    <button
-                      onClick={() => previewFrequency(Math.min(14000, Math.round(frequency * 2)))}
-                      className={`p-4 rounded-xl border text-left transition-all ${
-                        Math.abs(frequency - Math.min(14000, Math.round(frequency * 2))) < 1
-                          ? 'border-navy-700 bg-navy-50 dark:bg-navy-950/60 ring-2 ring-navy-700/20'
-                          : 'border-slate-200 dark:border-ink-800 bg-white dark:bg-ink-900 hover:border-navy-300'
-                      }`}
-                    >
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-                        {hi ? 'विकल्प 3 (एक ऑक्टेव ऊपर)' : 'Option 3 (+1 Octave)'}
-                      </span>
-                      <span className="font-mono font-bold text-lg text-navy-800 dark:text-navy-200">
-                        {Math.min(14000, Math.round(frequency * 2))} Hz
-                      </span>
-                    </button>
-                  </div>
-                  <div className="flex flex-col sm:flex-row gap-3">
+                  <div className="flex gap-3">
                     <button onClick={togglePitchTone} className="btn-outline flex-1 inline-flex items-center justify-center gap-2">
                       {playingMode === 'pitch' ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 fill-current" />}
                       {playingMode === 'pitch' ? (hi ? 'रोकें' : 'Stop') : (hi ? 'सुनें' : 'Listen')}
-                    </button>
-                    <button onClick={() => setSetupStep('level')} className="btn-navy flex-1">
-                      {hi ? 'पिच तय — तीव्रता सेट करें' : 'Pitch confirmed — set level'}
                     </button>
                   </div>
                 </div>
@@ -846,7 +971,7 @@ export const TinnitusReliefStudio: React.FC = () => {
                   { id: 'ACRN' as RxEngine, name: hi ? 'ACRN 4-टोन' : 'ACRN 4-tone', desc: hi ? 'आपकी पिच के चारों ओर चार टोन' : 'Four tones bracketing your pitch' },
                   { id: 'NOTCH' as RxEngine, name: hi ? 'नॉच्ड शोर' : 'Notched noise', desc: hi ? 'आपकी आवृत्ति पर कटा हुआ शोर' : 'Noise with your frequency filtered out' },
                   { id: 'BROAD' as RxEngine, name: hi ? 'ब्रॉडबैंड मास्कर' : 'Broadband masker', desc: hi ? 'सादा शोर जो टिनिटस को ढकता है' : 'Plain noise that covers the tinnitus' },
-                  { id: 'BINAURAL' as RxEngine, name: hi ? 'बायनौरल बीट्स (Neural)' : 'Binaural Beats (Neural)', desc: hi ? 'नींद और तनाव प्रबंधन हेतु अल्फा/डेल्टा लहरें' : 'Alpha/Delta brainwave entrainment for sleep & relaxation' },
+                  { id: 'BINAURAL' as RxEngine, name: hi ? 'बायनौरल बीट्स (नींद)' : 'Binaural Beats (Sleep & Relaxation)', desc: hi ? 'नींद और आराम के लिए कम-आवृत्ति ध्वनि — ACRN/नॉच से अलग साक्ष्य आधार' : 'Low-frequency tones for sleep & relaxation — distinct evidence base from ACRN/Notch therapy' },
                   { id: 'SOUNDSCAPE' as RxEngine, name: hi ? 'प्राकृतिक ध्वनियां' : 'Natural Soundscapes', desc: hi ? 'समुद्र की लहरें, बारिश व झरने का मास्क' : 'Ocean waves, rainfall & stream soundscapes' },
                 ]).map((option) => {
                   const active = engineChoice === option.id;
@@ -1035,11 +1160,14 @@ export const TinnitusReliefStudio: React.FC = () => {
                 </div>
               )}
 
-              {/* Graphic Equalizer Panel */}
+              {/* Graphic Equalizer Panel — cut-only for clinical safety.
+                  Boosting 6-12 kHz at this level and duration (4-6 h/day) in noise-exposed
+                  and presbycusic patients is hearing-aid prescription logic applied to
+                  uncalibrated hardware — clinically inadvisable. Cut-only is safe. */}
               <div className="rounded-xl bg-slate-50 dark:bg-ink-950 border border-slate-200 dark:border-ink-800 p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
-                    {hi ? '6-बैंड ग्राफिक इक्वेलाइज़र (ऑडियोग्राम ट्यूनिंग)' : '6-Band Graphic Equalizer (Audiogram Tuning)'}
+                    {hi ? '6-बैंड इक्वेलाइज़र (आराम शेपिंग — केवल कट)' : '6-Band EQ — Comfort Shaping (Cut Only)'}
                   </span>
                   <button
                     type="button"
@@ -1053,12 +1181,12 @@ export const TinnitusReliefStudio: React.FC = () => {
                   {EQ_FREQUENCIES.map((freqHz, index) => (
                     <div key={freqHz} className="flex flex-col items-center space-y-1.5">
                       <span className="text-[10px] font-mono font-bold text-slate-600 dark:text-slate-300">
-                        {eqGains[index] > 0 ? `+${eqGains[index]}` : eqGains[index]} dB
+                        {eqGains[index]} dB
                       </span>
                       <input
                         type="range"
                         min={-12}
-                        max={12}
+                        max={0}
                         step={1}
                         value={eqGains[index]}
                         onChange={(e) => {
@@ -1067,7 +1195,7 @@ export const TinnitusReliefStudio: React.FC = () => {
                           setEqGainsState(next);
                         }}
                         className="w-full h-24 accent-navy-700 cursor-pointer text-center [writing-mode:vertical-lr] [direction:rtl]"
-                        aria-label={`${freqHz} Hz EQ`}
+                        aria-label={`${freqHz >= 1000 ? `${freqHz / 1000}k` : freqHz} Hz EQ cut`}
                       />
                       <span className="text-[10px] font-mono font-bold text-slate-400">
                         {freqHz >= 1000 ? `${freqHz / 1000}k` : freqHz}
@@ -1077,8 +1205,8 @@ export const TinnitusReliefStudio: React.FC = () => {
                 </div>
                 <p className="text-[10px] text-slate-500 dark:text-slate-400 leading-relaxed pt-1">
                   {hi
-                    ? 'अपनी ऑडियोग्राम रिपोर्ट के अनुसार आवृत्तियों को समायोजित करें (जैसे सुनने की कमी वाले क्षेत्र को बढ़ाएं)।'
-                    : 'Adjust bands to match your audiogram loss curve (e.g. boost frequencies where hearing threshold is elevated).'}
+                    ? 'कठोर या असुविधाजनक आवृत्तियों को कम करें। इस EQ को केवल काटने (cut) के लिए डिज़ाइन किया गया है — बढ़ाने (boost) की सुविधा जानबूझकर उपलब्ध नहीं है।'
+                    : 'Reduce bands that sound harsh or uncomfortable. This EQ is cut-only by design — boosting is intentionally unavailable as uncalibrated gain at 6–12 kHz for hours a day is not clinically appropriate.'}
                 </p>
               </div>
 
@@ -1124,7 +1252,17 @@ export const TinnitusReliefStudio: React.FC = () => {
                   {hi ? 'सत्र टाइमर' : 'Session timer'}
                 </span>
                 <h3 className="font-bold text-sm text-slate-200">
-                  {engineChoice === 'ACRN' ? 'ACRN' : engineChoice === 'NOTCH' ? (hi ? 'नॉच्ड शोर' : 'Notched noise') : (hi ? 'ब्रॉडबैंड' : 'Broadband')} · {frequency} Hz
+                  {engineChoice === 'ACRN'
+                    ? 'ACRN'
+                    : engineChoice === 'NOTCH'
+                    ? (hi ? 'नॉच्ड शोर' : 'Notched noise')
+                    : engineChoice === 'BROAD'
+                    ? (hi ? 'ब्रॉडबैंड' : 'Broadband')
+                    : engineChoice === 'BINAURAL'
+                    ? (hi ? 'बायनौरल बीट्स' : 'Binaural Beats')
+                    : (hi ? 'प्राकृतिक ध्वनियां' : 'Natural Soundscape')}
+                  {/* Only show fT for modes where it is clinically relevant */}
+                  {(engineChoice === 'ACRN' || engineChoice === 'NOTCH' || engineChoice === 'BROAD') && ` · ${frequency} Hz`}
                 </h3>
               </div>
 

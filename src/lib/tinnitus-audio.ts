@@ -67,6 +67,16 @@ export const EQ_FREQUENCIES = [125, 500, 1000, 3000, 6000, 12000] as const;
 export type EqGains = [number, number, number, number, number, number];
 export const DEFAULT_EQ_GAINS: EqGains = [0, 0, 0, 0, 0, 0];
 
+/** What the filters will accept. The patient-facing control is cut-only — see EQ_UI_GAIN_LIMIT_DB. */
+export const EQ_GAIN_LIMIT_DB = { min: -12, max: 12 };
+
+/**
+ * Boost is deliberately withheld from the patient. Shaping for comfort means taking energy out;
+ * adding up to +12 dB at 6-12 kHz for hours a day — the region already damaged in the
+ * noise-exposed and presbycusic — is hearing-aid prescription, and this output is uncalibrated.
+ */
+export const EQ_UI_GAIN_LIMIT_DB = { min: -12, max: 0 };
+
 /**
  * Linear coefficients applied to the matched tinnitus frequency to derive the four
  * ACRN treatment tones — two below fT, two above.
@@ -138,6 +148,10 @@ const NOISE_BUFFER_SECONDS = 4;
  * would step the loudness — the exact jump the fades elsewhere exist to prevent.
  */
 const NOISE_TARGET_RMS = 0.2;
+
+/** Per-section Q for the notch cascade. Narrow enough that three sections stack without the
+ *  skirts spilling an octave either side of fT. */
+const NOTCH_Q = 4;
 
 export function clamp(value: number, min: number, max: number): number {
   if (Number.isNaN(value)) return min;
@@ -310,7 +324,7 @@ export class TinnitusEngine {
   private engineGain: GainNode | null = null;
   private masterGain: GainNode | null = null;
   private panner: StereoPannerNode | null = null;
-  private notch: BiquadFilterNode | null = null;
+  private notchFilters: BiquadFilterNode[] = [];
   private eqFilters: BiquadFilterNode[] = [];
 
   private oscillator: OscillatorNode | null = null;
@@ -319,9 +333,13 @@ export class TinnitusEngine {
   private noiseSource: AudioBufferSourceNode | null = null;
   private soundscapeSource: AudioBufferSourceNode | null = null;
   private soundscapeLfo: OscillatorNode | null = null;
+  private soundscapeLfoGain: GainNode | null = null;
+  private soundscapeVolLfo: OscillatorNode | null = null;
+  private soundscapeVolGain: GainNode | null = null;
   private noiseBuffers = new Map<NoiseColor, AudioBuffer>();
 
   private schedulerId: ReturnType<typeof setInterval> | null = null;
+  private teardownId: ReturnType<typeof setTimeout> | null = null;
   private nextSlotTime = 0;
   private slotIndex = 0;
   private cycleQueue: number[] = [];
@@ -351,6 +369,9 @@ export class TinnitusEngine {
    */
   async start(mode: Exclude<EngineMode, 'idle'>, params?: Partial<EngineParams>): Promise<void> {
     if (params) this.applyParams(params);
+    // A stop() still inside its fade window has a teardown pending. Without this it would fire
+    // ~180 ms from now and silently kill the sources we are about to start.
+    this.cancelPendingTeardown();
     this.stopSources();
 
     const ctx = this.ensureContext();
@@ -386,12 +407,24 @@ export class TinnitusEngine {
     this.mode = 'idle';
     this.fadeMaster(0);
     const fadeMs = AUDIO_LIMITS.FADE_SECONDS * 1000;
-    setTimeout(() => this.stopSources(), fadeMs + 30);
+    this.cancelPendingTeardown();
+    this.teardownId = setTimeout(() => {
+      this.teardownId = null;
+      this.stopSources();
+    }, fadeMs + 30);
+  }
+
+  private cancelPendingTeardown(): void {
+    if (this.teardownId !== null) {
+      clearTimeout(this.teardownId);
+      this.teardownId = null;
+    }
   }
 
   /** Releases the AudioContext. Browsers cap how many can exist at once. */
   dispose(): void {
     this.mode = 'idle';
+    this.cancelPendingTeardown();
     this.clearScheduler();
     this.stopSources();
     this.noiseBuffers.clear();
@@ -404,7 +437,6 @@ export class TinnitusEngine {
     this.engineGain = null;
     this.masterGain = null;
     this.panner = null;
-    this.notch = null;
   }
 
   setFrequency(hz: number): void {
@@ -414,7 +446,12 @@ export class TinnitusEngine {
     const target = ctx.currentTime + PARAM_RAMP_SECONDS;
     // Glide rather than jump, so sweeping the slider does not produce zipper noise.
     this.oscillator?.frequency.linearRampToValueAtTime(this.params.frequency, target);
-    this.notch?.frequency.linearRampToValueAtTime(this.params.frequency, target);
+    // The cascade keeps its half-octave spacing as fT moves.
+    const edge = Math.pow(2, 0.25);
+    const centres = [this.params.frequency / edge, this.params.frequency, this.params.frequency * edge];
+    this.notchFilters.forEach((filter, i) => {
+      filter.frequency.linearRampToValueAtTime(clampFrequency(centres[i]), target);
+    });
   }
 
   setLevelDb(db: number): void {
@@ -435,10 +472,38 @@ export class TinnitusEngine {
   setNoiseColor(color: NoiseColor): void {
     if (this.params.noiseColor === color) return;
     this.params.noiseColor = color;
-    if (this.mode === 'notched' || this.mode === 'broadband') {
+    if (this.mode !== 'notched' && this.mode !== 'broadband') return;
+
+    // Swapping the buffer source is a step discontinuity. Duck the master first so the change
+    // lands in silence — the same reason every other transition here is ramped.
+    const notched = this.mode === 'notched';
+    this.fadeMaster(0);
+    this.cancelPendingTeardown();
+    this.teardownId = setTimeout(() => {
+      this.teardownId = null;
+      if (this.mode !== 'notched' && this.mode !== 'broadband') return;
       this.stopNoise();
-      this.startNoise(this.mode === 'notched');
-    }
+      this.startNoise(notched);
+      this.fadeMaster(AUDIO_LIMITS.MASTER_CEILING);
+    }, AUDIO_LIMITS.FADE_SECONDS * 1000 + 30);
+  }
+
+  setSoundscape(preset: SoundscapePreset): void {
+    if (this.params.soundscape === preset && this.soundscapeSource) return;
+    this.params.soundscape = preset;
+    if (this.mode !== 'soundscape') return;
+
+    this.fadeMaster(0);
+    this.cancelPendingTeardown();
+    this.teardownId = setTimeout(() => {
+      this.teardownId = null;
+      if (this.mode !== 'soundscape') return;
+      this.stopSoundscape();
+      if (preset !== 'none') {
+        this.startSoundscape(preset);
+      }
+      this.fadeMaster(AUDIO_LIMITS.MASTER_CEILING);
+    }, AUDIO_LIMITS.FADE_SECONDS * 1000 + 30);
   }
 
   setAcrnOptions(options: Partial<AcrnOptions>): void {
@@ -495,6 +560,21 @@ export class TinnitusEngine {
     if (params.levelDb !== undefined) this.params.levelDb = clampLevelDb(params.levelDb);
     if (params.pan !== undefined) this.params.pan = clamp(params.pan, -1, 1);
     if (params.noiseColor !== undefined) this.params.noiseColor = params.noiseColor;
+    if (params.bgNoiseColor !== undefined) this.params.bgNoiseColor = params.bgNoiseColor;
+    if (params.soundscape !== undefined) {
+      if (this.params.soundscape !== params.soundscape && this.mode === 'soundscape') {
+        this.setSoundscape(params.soundscape);
+      } else {
+        this.params.soundscape = params.soundscape;
+      }
+    }
+    if (params.binaural !== undefined) this.params.binaural = params.binaural;
+    if (params.eqGains !== undefined) {
+      this.params.eqGains = params.eqGains.map((g) => clamp(g, EQ_GAIN_LIMIT_DB.min, EQ_GAIN_LIMIT_DB.max)) as EqGains;
+      // The graph may already exist from an earlier session; push the gains through so a
+      // change made while idle is not lost.
+      if (this.eqFilters.length > 0) this.setEqGains(this.params.eqGains);
+    }
     if (params.acrn) this.setAcrnOptions(params.acrn);
   }
 
@@ -550,7 +630,10 @@ export class TinnitusEngine {
     this.params.eqGains = [...gains];
     if (!this.ctx || this.eqFilters.length === 0) return;
     this.eqFilters.forEach((filter, i) => {
-      filter.gain.linearRampToValueAtTime(clamp(gains[i] ?? 0, -12, 12), this.ctx!.currentTime + PARAM_RAMP_SECONDS);
+      filter.gain.linearRampToValueAtTime(
+        clamp(gains[i] ?? 0, EQ_GAIN_LIMIT_DB.min, EQ_GAIN_LIMIT_DB.max),
+        this.ctx!.currentTime + PARAM_RAMP_SECONDS
+      );
     });
   }
 
@@ -588,34 +671,47 @@ export class TinnitusEngine {
     source.buffer = buffer;
     source.loop = true;
 
+    let node: AudioNode = source;
+    if (notched) {
+      for (const filter of this.buildNotchCascade(ctx)) {
+        node.connect(filter);
+        node = filter;
+      }
+    }
     if (gainFactor < 1.0) {
       const subGain = ctx.createGain();
       subGain.gain.setValueAtTime(gainFactor, ctx.currentTime);
-      if (notched) {
-        const notch = ctx.createBiquadFilter();
-        notch.type = 'notch';
-        notch.frequency.setValueAtTime(this.params.frequency, ctx.currentTime);
-        notch.Q.setValueAtTime(2, ctx.currentTime);
-        source.connect(notch).connect(subGain).connect(this.engineGain);
-        this.notch = notch;
-      } else {
-        source.connect(subGain).connect(this.engineGain);
-      }
-    } else {
-      if (notched) {
-        const notch = ctx.createBiquadFilter();
-        notch.type = 'notch';
-        notch.frequency.setValueAtTime(this.params.frequency, ctx.currentTime);
-        notch.Q.setValueAtTime(2, ctx.currentTime);
-        source.connect(notch).connect(this.engineGain);
-        this.notch = notch;
-      } else {
-        source.connect(this.engineGain);
-      }
+      node.connect(subGain);
+      node = subGain;
     }
+    node.connect(this.engineGain);
 
     source.start();
     this.noiseSource = source;
+  }
+
+  /**
+   * Notched sound therapy needs energy removed across roughly half an octave around fT, with
+   * steep edges. One biquad cannot do that — it nulls only within a few hundred Hz of centre
+   * while its -3 dB skirt runs close to a full octave. Three narrower notches spaced across the
+   * target band approximate the stopband far better, and the skirts stay tight.
+   */
+  private buildNotchCascade(ctx: BaseAudioContext): BiquadFilterNode[] {
+    const fT = clampFrequency(this.params.frequency);
+    // Half-octave band: fT / 2^0.25 .. fT * 2^0.25.
+    const edge = Math.pow(2, 0.25);
+    const centres = [fT / edge, fT, fT * edge];
+
+    const filters = centres.map((centre) => {
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'notch';
+      filter.frequency.setValueAtTime(clampFrequency(centre), ctx.currentTime);
+      filter.Q.setValueAtTime(NOTCH_Q, ctx.currentTime);
+      return filter;
+    });
+
+    this.notchFilters = filters;
+    return filters;
   }
 
   private startAcrnScheduler(): void {
@@ -747,38 +843,87 @@ export class TinnitusEngine {
     const lfoGain = ctx.createGain();
 
     if (preset === 'ocean') {
-      // Swelling ocean waves: 0.1 Hz LFO modulating lowpass filter cutoff
+      // Swelling ocean waves: 0.1 Hz LFO (10s cycle) modulating lowpass filter cutoff & volume
       filter.type = 'lowpass';
-      filter.frequency.setValueAtTime(400, ctx.currentTime);
+      filter.frequency.setValueAtTime(300, ctx.currentTime);
+      
       lfo.type = 'sine';
       lfo.frequency.setValueAtTime(0.1, ctx.currentTime); // 10s swell cycle
       lfoGain.gain.setValueAtTime(350, ctx.currentTime);
-      lfo.connect(filter.frequency);
+      lfo.connect(lfoGain);
+      lfoGain.connect(filter.frequency);
+
+      // Synchronized volume swell gain for ocean waves
+      const volGain = ctx.createGain();
+      volGain.gain.setValueAtTime(0.6, ctx.currentTime);
+
+      const volLfoGain = ctx.createGain();
+      volLfoGain.gain.setValueAtTime(0.35, ctx.currentTime);
+
+      lfo.connect(volLfoGain);
+      volLfoGain.connect(volGain.gain);
+
+      source.connect(filter).connect(volGain).connect(this.engineGain);
+      this.soundscapeVolGain = volGain;
     } else if (preset === 'rain') {
-      // Gentle rain: highpass filter at 700 Hz with light LFO shimmer
+      // Gentle rain: highpass filter at 900 Hz with 2.2 Hz LFO shimmer
       filter.type = 'highpass';
-      filter.frequency.setValueAtTime(700, ctx.currentTime);
+      filter.frequency.setValueAtTime(900, ctx.currentTime);
+      
       lfo.type = 'sine';
-      lfo.frequency.setValueAtTime(2.0, ctx.currentTime);
-      lfoGain.gain.setValueAtTime(100, ctx.currentTime);
-      lfo.connect(filter.frequency);
+      lfo.frequency.setValueAtTime(2.2, ctx.currentTime); // 2.2 Hz shimmer
+      lfoGain.gain.setValueAtTime(300, ctx.currentTime);
+      lfo.connect(lfoGain);
+      lfoGain.connect(filter.frequency);
+
+      source.connect(filter).connect(this.engineGain);
     } else {
-      // Forest stream: bandpass filter around 500 Hz
+      // Forest stream: resonant bandpass filter around 550 Hz (babbling brook)
       filter.type = 'bandpass';
-      filter.frequency.setValueAtTime(500, ctx.currentTime);
-      filter.Q.setValueAtTime(1.5, ctx.currentTime);
+      filter.frequency.setValueAtTime(550, ctx.currentTime);
+      filter.Q.setValueAtTime(2.2, ctx.currentTime);
+
       lfo.type = 'sine';
-      lfo.frequency.setValueAtTime(0.35, ctx.currentTime);
-      lfoGain.gain.setValueAtTime(200, ctx.currentTime);
-      lfo.connect(filter.frequency);
+      lfo.frequency.setValueAtTime(0.45, ctx.currentTime); // 2.2s ripple cycle
+      lfoGain.gain.setValueAtTime(300, ctx.currentTime);
+      lfo.connect(lfoGain);
+      lfoGain.connect(filter.frequency);
+
+      source.connect(filter).connect(this.engineGain);
     }
 
-    source.connect(filter).connect(this.engineGain);
     lfo.start();
     source.start();
 
     this.soundscapeSource = source;
     this.soundscapeLfo = lfo;
+    this.soundscapeLfoGain = lfoGain;
+  }
+
+  private stopSoundscape(): void {
+    if (this.soundscapeSource) {
+      try { this.soundscapeSource.stop(); } catch { /* ignore */ }
+      this.soundscapeSource.disconnect();
+      this.soundscapeSource = null;
+    }
+    if (this.soundscapeLfo) {
+      try { this.soundscapeLfo.stop(); } catch { /* ignore */ }
+      this.soundscapeLfo.disconnect();
+      this.soundscapeLfo = null;
+    }
+    if (this.soundscapeLfoGain) {
+      this.soundscapeLfoGain.disconnect();
+      this.soundscapeLfoGain = null;
+    }
+    if (this.soundscapeVolLfo) {
+      try { this.soundscapeVolLfo.stop(); } catch { /* ignore */ }
+      this.soundscapeVolLfo.disconnect();
+      this.soundscapeVolLfo = null;
+    }
+    if (this.soundscapeVolGain) {
+      this.soundscapeVolGain.disconnect();
+      this.soundscapeVolGain = null;
+    }
   }
 
   private stopNoise(): void {
@@ -791,10 +936,14 @@ export class TinnitusEngine {
       this.noiseSource.disconnect();
       this.noiseSource = null;
     }
-    if (this.notch) {
-      this.notch.disconnect();
-      this.notch = null;
+    for (const filter of this.notchFilters) {
+      try {
+        filter.disconnect();
+      } catch {
+        /* already disconnected */
+      }
     }
+    this.notchFilters = [];
   }
 
   private stopSources(): void {
@@ -818,16 +967,7 @@ export class TinnitusEngine {
       this.binauralOscR.disconnect();
       this.binauralOscR = null;
     }
-    if (this.soundscapeSource) {
-      try { this.soundscapeSource.stop(); } catch { /* ignore */ }
-      this.soundscapeSource.disconnect();
-      this.soundscapeSource = null;
-    }
-    if (this.soundscapeLfo) {
-      try { this.soundscapeLfo.stop(); } catch { /* ignore */ }
-      this.soundscapeLfo.disconnect();
-      this.soundscapeLfo = null;
-    }
+    this.stopSoundscape();
     this.stopNoise();
   }
 }

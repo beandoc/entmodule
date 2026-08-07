@@ -53,11 +53,30 @@ export const STORAGE_KEYS = {
  * Human-typeable prescription code, in the spirit of the CH-ENT-#### OPD tokens.
  * Example: RX-8000-45-ACRN-3x8 — 8000 Hz, -45 dB, ACRN, 3 cycles on / 8 rest.
  */
-export const RX_PATTERN = /^RX-(\d{3,5})-(\d{1,2})-(ACRN|NOTCH|BROAD)-(\d{1,2})x(\d{1,2})$/i;
+export const RX_PATTERN = /^RX-(\d{3,5})-(\d{1,2})-(ACRN|NOTCH|BROAD|BINAURAL|SOUND)-(\d{1,2})x(\d{1,2})$/i;
+
+/** Abbreviate SOUNDSCAPE to SOUND so the RX code stays under the typeable character limit. */
+const ENGINE_ENCODE: Record<RxEngine, string> = {
+  ACRN: 'ACRN',
+  NOTCH: 'NOTCH',
+  BROAD: 'BROAD',
+  BINAURAL: 'BINAURAL',
+  SOUNDSCAPE: 'SOUND',
+};
+
+/** Reverse map for decoding abbreviated engine tokens. */
+const TOKEN_TO_ENGINE: Record<string, RxEngine> = {
+  ACRN: 'ACRN',
+  NOTCH: 'NOTCH',
+  BROAD: 'BROAD',
+  BINAURAL: 'BINAURAL',
+  SOUND: 'SOUNDSCAPE',
+};
 
 export function encodeRx(rx: Pick<TinnitusRx, 'fT' | 'levelDb' | 'engine' | 'loopRepeat' | 'restLength'>): string {
   const level = Math.abs(Math.round(rx.levelDb));
-  return `RX-${Math.round(rx.fT)}-${level}-${rx.engine}-${rx.loopRepeat}x${rx.restLength}`;
+  const token = ENGINE_ENCODE[rx.engine] ?? rx.engine;
+  return `RX-${Math.round(rx.fT)}-${level}-${token}-${rx.loopRepeat}x${rx.restLength}`;
 }
 
 /** Returns null for anything malformed or out of clinical range. */
@@ -67,7 +86,8 @@ export function decodeRx(code: string): Omit<TinnitusRx, 'source' | 'updatedAt'>
   if (match) {
     const fT = Number(match[1]);
     const levelDb = -Number(match[2]);
-    const engine = match[3].toUpperCase() as RxEngine;
+    const token = match[3].toUpperCase();
+    const engine: RxEngine = (TOKEN_TO_ENGINE[token] ?? token) as RxEngine;
     const loopRepeat = Number(match[4]);
     const restLength = Number(match[5]);
 
@@ -158,8 +178,10 @@ export function saveThiToSymptomLog(score: number, gradeLabel: string): void {
       id: crypto.randomUUID(),
       date: new Date().toISOString().slice(0, 10),
       pain: 0,
-      // THI runs 0-100; the symptom log runs 0-10.
-      hearing: Math.min(10, Math.round((score / 100) * 10)),
+      // THI is a distress/handicap score, NOT a hearing-threshold measure.
+      // Writing it into the `hearing` field (0-10) would distort that trend line.
+      // Keep hearing at 0 and record the THI in the notes field only.
+      hearing: 0,
       dizziness: 0,
       notes: `Tinnitus Handicap Inventory (THI-25): ${score}/100 — ${gradeLabel}`,
       createdAt: new Date().toISOString(),

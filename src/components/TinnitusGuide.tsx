@@ -261,8 +261,8 @@ export const TinnitusGuide: React.FC = () => {
                 </div>
                 <p className="text-xs text-navy-100 leading-relaxed">
                   {hi
-                    ? 'यहाँ बताई गई साउंड थेरेपी को अभी आज़माएं — अपनी टिनिटस पिच खोजें या ऑडियोलॉजिस्ट का कोड डालें, फिर हेडफोन पर ACRN, नॉच्ड या ब्रॉडबैंड मास्किंग चलाएं।'
-                    : 'Put the sound therapy described here into practice — match your tinnitus pitch or enter your audiologist code, then play ACRN, notched or broadband masking through your headphones.'}
+                    ? 'यहाँ बताई गई साउंड थेरेपी को अभी आज़माएं — अपनी टिनिटस की निर्धारित आवृत्ति दर्ज करें या स्वयं पिच खोजें, फिर हेडफोन पर ACRN, नॉच्ड या ब्रॉडबैंड मास्किंग चलाएं।'
+                    : 'Put the sound therapy described here into practice — enter your prescribed pitch frequency or find it yourself, then play ACRN, notched or broadband masking through your headphones.'}
                 </p>
               </div>
             </div>

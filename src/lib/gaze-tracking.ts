@@ -173,6 +173,15 @@ const FIXATION_MIN_DURATION_MS = 80;
 /** Saccade detection: velocity threshold (°/s). */
 const SACCADE_VELOCITY_THRESHOLD = 30;
 
+/**
+ * Maximum gap between consecutive samples that still counts as continuous
+ * tracking (ms). Face detection drops out whenever the patient blinks, turns
+ * far off-axis, or the frame rate stalls. Treating the jump either side of such
+ * a dropout as real eye motion manufactures a huge phantom velocity, so every
+ * velocity-based metric ignores intervals longer than this.
+ */
+const MAX_SAMPLE_GAP_MS = 200;
+
 /** Nystagmus heuristic: minimum oscillation frequency to flag (Hz). */
 const NYSTAGMUS_MIN_HZ = 1.0;
 /** Nystagmus heuristic: minimum oscillation amplitude in normalised units. */
@@ -355,33 +364,41 @@ export function detectFixations(
   let i = 0;
 
   while (i < gazeHistory.length) {
-    // Build a window of minimum duration
+    // Grow a window from i while it stays within the dispersion threshold,
+    // maintaining the bounding box incrementally so a long session stays O(n)
+    // rather than re-scanning the whole window on every extension.
+    const seed = gazeHistory[i];
+    let minX = seed.x, maxX = seed.x;
+    let minY = seed.y, maxY = seed.y;
+    let sumX = seed.x, sumY = seed.y;
     let j = i + 1;
-    while (j < gazeHistory.length && gazeHistory[j].t - gazeHistory[i].t < minDuration) {
+
+    while (j < gazeHistory.length) {
+      // A tracking dropout terminates the window: samples either side of a gap
+      // are separate fixations, not one long one.
+      const gapMs = gazeHistory[j].t - gazeHistory[j - 1].t;
+      if (gapMs <= 0 || gapMs > MAX_SAMPLE_GAP_MS) break;
+
+      const p = gazeHistory[j];
+      const nMinX = Math.min(minX, p.x), nMaxX = Math.max(maxX, p.x);
+      const nMinY = Math.min(minY, p.y), nMaxY = Math.max(maxY, p.y);
+      if ((nMaxX - nMinX) + (nMaxY - nMinY) > dispThreshold) break;
+
+      minX = nMinX; maxX = nMaxX; minY = nMinY; maxY = nMaxY;
+      sumX += p.x; sumY += p.y;
       j++;
     }
-    if (j >= gazeHistory.length) break;
 
-    const window = gazeHistory.slice(i, j);
-    const disp = dispersion(window);
+    const count = j - i;
+    const startT = seed.t;
+    const endT = gazeHistory[j - 1].t;
 
-    if (disp <= dispThreshold) {
-      // Grow the window while dispersion stays within threshold
-      while (j < gazeHistory.length) {
-        const candidate = [...window, gazeHistory[j]];
-        if (dispersion(candidate) > dispThreshold) break;
-        window.push(gazeHistory[j]);
-        j++;
-      }
-      const startT = window[0].t;
-      const endT = window[window.length - 1].t;
-      const cx = window.reduce((s, p) => s + p.x, 0) / window.length;
-      const cy = window.reduce((s, p) => s + p.y, 0) / window.length;
+    if (count >= 2 && endT - startT >= minDuration) {
       fixations.push({
         startT, endT,
         duration: endT - startT,
-        centroid: { x: cx, y: cy },
-        count: window.length,
+        centroid: { x: sumX / count, y: sumY / count },
+        count,
       });
       i = j;
     } else {
@@ -390,13 +407,6 @@ export function detectFixations(
   }
 
   return fixations;
-}
-
-function dispersion(points: GazePoint[]): number {
-  if (points.length === 0) return 0;
-  const xs = points.map(p => p.x);
-  const ys = points.map(p => p.y);
-  return (Math.max(...xs) - Math.min(...xs)) + (Math.max(...ys) - Math.min(...ys));
 }
 
 /* =========================================================== saccade detection */
@@ -417,8 +427,11 @@ export function detectSaccades(
   // Compute velocity for each sample
   const velocities: number[] = [0];
   for (let i = 1; i < gazeHistory.length; i++) {
-    const dt = (gazeHistory[i].t - gazeHistory[i - 1].t) / 1000; // seconds
-    if (dt <= 0) { velocities.push(0); continue; }
+    const gapMs = gazeHistory[i].t - gazeHistory[i - 1].t;
+    // A tracking dropout is not an eye movement — the displacement either side
+    // of the gap is unmeasured, so it must not register as a saccade.
+    if (gapMs <= 0 || gapMs > MAX_SAMPLE_GAP_MS) { velocities.push(0); continue; }
+    const dt = gapMs / 1000; // seconds
     const dx = gazeHistory[i].x - gazeHistory[i - 1].x;
     const dy = gazeHistory[i].y - gazeHistory[i - 1].y;
     velocities.push(Math.sqrt(dx * dx + dy * dy) / dt);
@@ -485,16 +498,17 @@ export function scoreVOR(
   // Compute head velocity series (°/s)
   const headVelocities: number[] = [];
   for (let i = 1; i < headSeries.length; i++) {
-    const dt = (headSeries[i].t - headSeries[i - 1].t) / 1000;
-    if (dt <= 0) continue;
-    headVelocities.push(Math.abs(headSeries[i].yaw - headSeries[i - 1].yaw) / dt);
+    const gapMs = headSeries[i].t - headSeries[i - 1].t;
+    if (gapMs <= 0 || gapMs > MAX_SAMPLE_GAP_MS) continue;
+    headVelocities.push(Math.abs(headSeries[i].yaw - headSeries[i - 1].yaw) / (gapMs / 1000));
   }
 
   // Compute gaze velocity series (normalised → °/s)
   const gazeVelocities: number[] = [];
   for (let i = 1; i < gazeSeries.length; i++) {
-    const dt = (gazeSeries[i].t - gazeSeries[i - 1].t) / 1000;
-    if (dt <= 0) continue;
+    const gapMs = gazeSeries[i].t - gazeSeries[i - 1].t;
+    if (gapMs <= 0 || gapMs > MAX_SAMPLE_GAP_MS) continue;
+    const dt = gapMs / 1000;
     const dx = gazeSeries[i].x - gazeSeries[i - 1].x;
     const dy = gazeSeries[i].y - gazeSeries[i - 1].y;
     gazeVelocities.push((Math.sqrt(dx * dx + dy * dy) / dt) * DEG_PER_UNIT);

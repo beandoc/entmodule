@@ -312,8 +312,8 @@ export const TinnitusReliefStudio: React.FC = () => {
           </h1>
           <p className="text-navy-100 text-xs md:text-sm leading-relaxed">
             {hi
-              ? 'अपनी टिनिटस की आवृत्ति खोजें या ऑडियोलॉजिस्ट द्वारा दिया गया कोड डालें, फिर अपने हेडफोन पर आरामदायक तीव्रता पर ACRN, नॉच्ड या ब्रॉडबैंड साउंड थेरेपी चलाएं।'
-              : 'Find your tinnitus pitch or load the code your audiologist gave you, then play ACRN, notched, or broadband sound therapy through your own headphones at a level you set yourself.'}
+              ? 'अपनी ऑडियोलॉजी पर्ची से निर्धारित आवृत्ति (Hz) दर्ज करें या स्वयं पिच खोजें, फिर अपने हेडफोन पर आरामदायक तीव्रता पर ACRN, नॉच्ड या ब्रॉडबैंड साउंड थेरेपी चलाएं।'
+              : 'Enter your prescribed pitch frequency (Hz) or RX code from your Audiology slip, or find your pitch yourself, then play ACRN, notched, or broadband sound therapy through your own headphones.'}
           </p>
           {rx && (
             <div className="inline-flex flex-wrap items-center gap-2 pt-1">
@@ -380,30 +380,49 @@ export const TinnitusReliefStudio: React.FC = () => {
       {activeTab === 'setup' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-6">
-            {/* Prescription code */}
+            {/* Prescription & Frequency Entry */}
             <div className="card p-6 space-y-4">
               <div className="flex items-center gap-2">
                 <KeyRound className="w-5 h-5 text-navy-700 dark:text-navy-300" />
                 <h2 className="font-bold text-slate-900 dark:text-white">
-                  {hi ? 'ऑडियोलॉजिस्ट का प्रिस्क्रिप्शन कोड' : 'Audiologist prescription code'}
+                  {hi ? 'ऑडियोलॉजिस्ट प्रिस्क्रिप्शन या आवृत्ति दर्ज करें' : 'Audiologist Prescription & Frequency Entry'}
                 </h2>
               </div>
               <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
                 {hi
-                  ? 'यदि ऑडियोलॉजी लैब ने पिच-मैचिंग के बाद आपको एक कोड दिया है, तो उसे यहाँ डालें। इससे आवृत्ति, स्तर और प्रोटोकॉल स्वतः सेट हो जाएंगे।'
-                  : 'If the Audiology lab gave you a code after pitch-matching, enter it here. It sets your frequency, level and protocol in one step.'}
+                  ? 'अपनी ऑडियोलॉजी रिपोर्ट या ओपीडी पर्ची में लिखी गई आवृत्ति (Hz) या प्रिस्क्रिप्शन कोड दर्ज करें (जैसे 8000 Hz, 6000 Hz या RX-8000-45-ACRN-3x8)।'
+                  : 'Enter the pitch frequency (Hz) or prescription code written on your Audiology OPD slip (e.g. 8000 Hz, 6000 Hz or RX-8000-45-ACRN-3x8).'}
               </p>
               <div className="flex flex-col sm:flex-row gap-3">
                 <input
                   value={rxCode}
                   onChange={(e) => { setRxCode(e.target.value); setRxError(''); }}
-                  placeholder="RX-8000-45-ACRN-3x8"
+                  placeholder={hi ? 'उदा: 8000 Hz, 6000 या RX-8000-45-ACRN-3x8' : 'e.g. 8000 Hz, 6000 or RX-8000-45-ACRN-3x8'}
                   className="input-field font-mono uppercase flex-1"
-                  aria-label={hi ? 'प्रिस्क्रिप्शन कोड' : 'Prescription code'}
+                  aria-label={hi ? 'प्रिस्क्रिप्शन या आवृत्ति' : 'Prescription or frequency'}
                 />
                 <button onClick={applyRxCode} disabled={!rxCode.trim()} className="btn-navy disabled:opacity-50 whitespace-nowrap">
-                  {hi ? 'कोड लागू करें' : 'Apply code'}
+                  {hi ? 'प्रिस्क्रिप्शन लागू करें' : 'Apply prescription'}
                 </button>
+              </div>
+              {/* Quick prescription frequency presets */}
+              <div className="flex items-center gap-2 flex-wrap pt-1">
+                <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+                  {hi ? 'सामान्य प्रिस्क्राइब आवृत्तियां:' : 'Common prescribed frequencies:'}
+                </span>
+                {[4000, 6000, 8000, 10000, 12000].map((hz) => (
+                  <button
+                    key={hz}
+                    type="button"
+                    onClick={() => {
+                      setRxCode(`${hz} Hz`);
+                      setRxError('');
+                    }}
+                    className="px-2.5 py-1 text-xs font-mono font-bold rounded-md bg-slate-100 dark:bg-ink-800 text-slate-700 dark:text-slate-200 hover:bg-navy-50 hover:text-navy-700 dark:hover:bg-navy-900 dark:hover:text-navy-200 border border-slate-200 dark:border-ink-700 transition-colors"
+                  >
+                    {hz} Hz
+                  </button>
+                ))}
               </div>
               {rxError && <p className="text-xs font-semibold text-red-600 dark:text-red-400">{rxError}</p>}
             </div>

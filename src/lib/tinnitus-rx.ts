@@ -62,21 +62,41 @@ export function encodeRx(rx: Pick<TinnitusRx, 'fT' | 'levelDb' | 'engine' | 'loo
 
 /** Returns null for anything malformed or out of clinical range. */
 export function decodeRx(code: string): Omit<TinnitusRx, 'source' | 'updatedAt'> | null {
-  const match = RX_PATTERN.exec(code.trim().toUpperCase());
-  if (!match) return null;
+  const trimmed = code.trim().toUpperCase();
+  const match = RX_PATTERN.exec(trimmed);
+  if (match) {
+    const fT = Number(match[1]);
+    const levelDb = -Number(match[2]);
+    const engine = match[3].toUpperCase() as RxEngine;
+    const loopRepeat = Number(match[4]);
+    const restLength = Number(match[5]);
 
-  const fT = Number(match[1]);
-  const levelDb = -Number(match[2]);
-  const engine = match[3].toUpperCase() as RxEngine;
-  const loopRepeat = Number(match[4]);
-  const restLength = Number(match[5]);
+    if (fT < 100 || fT > 14000) return null;
+    if (levelDb < -80 || levelDb > 0) return null;
+    if (loopRepeat < 1 || loopRepeat > 10) return null;
+    if (restLength > 64) return null;
 
-  if (fT < 100 || fT > 14000) return null;
-  if (levelDb < -80 || levelDb > 0) return null;
-  if (loopRepeat < 1 || loopRepeat > 10) return null;
-  if (restLength > 64) return null;
+    return { fT, levelDb, engine, loopRepeat, restLength };
+  }
 
-  return { fT, levelDb, engine, loopRepeat, restLength };
+  // Direct prescribed frequency input (e.g., "8000", "8000 Hz", "6kHz", "8k", "4000")
+  const freqMatch = /^(\d{1,5})\s*(KHZ|HZ|K)?$/i.exec(trimmed);
+  if (freqMatch) {
+    let num = Number(freqMatch[1]);
+    const unit = freqMatch[2]?.toUpperCase();
+    if (unit === 'K' || unit === 'KHZ') num = num * 1000;
+    if (num >= 100 && num <= 14000) {
+      return {
+        fT: num,
+        levelDb: -45,
+        engine: 'ACRN',
+        loopRepeat: 3,
+        restLength: 8,
+      };
+    }
+  }
+
+  return null;
 }
 
 /* ------------------------------------------------------------------ storage */

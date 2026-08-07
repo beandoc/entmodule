@@ -109,10 +109,12 @@ const code = encodeRx(rx);
 assert.equal(code, 'RX-8000-45-ACRN-3x8');
 assert.deepEqual(decodeRx(code), rx);
 assert.deepEqual(decodeRx('  rx-8000-45-acrn-3x8  '), rx, 'codes must be case- and space-insensitive');
+assert.deepEqual(decodeRx('8000 Hz'), rx, 'pure frequency input 8000 Hz must decode to 8000 Hz rx');
+assert.deepEqual(decodeRx('6kHz'), { fT: 6000, levelDb: -45, engine: 'ACRN', loopRepeat: 3, restLength: 8 }, '6kHz input must decode to 6000 Hz rx');
 assert.deepEqual(decodeRx(encodeRx({ fT: 440, levelDb: -60, engine: 'NOTCH', loopRepeat: 1, restLength: 0 })), {
   fT: 440, levelDb: -60, engine: 'NOTCH', loopRepeat: 1, restLength: 0,
 });
-console.log(`   [PASS] ${code} round-trips exactly`);
+console.log(`   [PASS] ${code} round-trips exactly & direct frequency inputs (8000 Hz, 6kHz) parse correctly`);
 
 for (const bad of [
   '', 'RX', 'RX-8000-45-ACRN', 'RX-8000-45-XXXX-3x8', 'RX-99-45-ACRN-3x8',

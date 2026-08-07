@@ -116,6 +116,19 @@ assert.deepEqual(decodeRx(encodeRx({ fT: 440, levelDb: -60, engine: 'NOTCH', loo
 });
 console.log(`   [PASS] ${code} round-trips exactly & direct frequency inputs (8000 Hz, 6kHz) parse correctly`);
 
+// Every engine must survive the badge -> clipboard -> retype path. BINAURAL and SOUNDSCAPE were
+// encodable but not decodable before, so the code shown in the hero could not be entered back.
+for (const engine of ['ACRN', 'NOTCH', 'BROAD', 'BINAURAL', 'SOUNDSCAPE']) {
+  const original = { fT: 8000, levelDb: -45, engine, loopRepeat: 3, restLength: 8 };
+  const encoded = encodeRx(original);
+  assert.ok(
+    decodeRx(encoded) !== null,
+    `${engine} encodes to "${encoded}" which decodeRx rejects — the hero badge would be untypeable`
+  );
+  assert.deepEqual(decodeRx(encoded), original, `${engine} must round-trip to the same prescription`);
+}
+console.log('   [PASS] all 5 engines round-trip (incl. BINAURAL and SOUNDSCAPE -> SOUND)');
+
 for (const bad of [
   '', 'RX', 'RX-8000-45-ACRN', 'RX-8000-45-XXXX-3x8', 'RX-99-45-ACRN-3x8',
   'RX-99999-45-ACRN-3x8', 'RX-8000-99-ACRN-3x8', 'RX-8000-45-ACRN-0x8',

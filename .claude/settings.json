@@ -5,7 +5,9 @@
       "Read(//Users/sachinsrivastava/.claude/plugins/cache/claude-plugins-official/**)",
       "Bash(npx prisma *)",
       "Bash(node -e ' *)",
-      "Bash(pkill -f \"next dev -p 3007\")"
+      "Bash(pkill -f \"next dev -p 3007\")",
+      "Bash(sed -n '/export function encodeRx/,/^}/p' src/lib/tinnitus-rx.ts)",
+      "Bash(sed -n '/saveThiToSymptomLog/,/^}/p' src/lib/tinnitus-rx.ts)"
     ]
   }
 }

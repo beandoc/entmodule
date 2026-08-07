@@ -3,12 +3,12 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import {
-  ClipboardCheck, CheckCircle2, AlertTriangle, ShieldAlert, Printer, Save, Check, RotateCcw,
+  ClipboardCheck, CheckCircle2, AlertTriangle, ShieldAlert, Printer, Save, Check, RotateCcw, CloudOff,
 } from 'lucide-react';
 import { useAppData } from '@/lib/app-data-context';
 import {
   THI_ITEMS, THI_OPTIONS, scoreThi, thiBandFor, scoreThiSubscale,
-  saveThiResult, saveThiToSymptomLog, loadThiHistory,
+  saveThiResult, saveThiToSymptomLog, syncThiToServer,
   type ThiResult, type ThiTone,
 } from '@/lib/tinnitus-rx';
 
@@ -41,6 +41,7 @@ export const TinnitusThiInventory: React.FC<Props> = ({ onSaved }) => {
   const [answers, setAnswers] = useState<Record<string, number>>({});
   const [submitted, setSubmitted] = useState(false);
   const [savedToLog, setSavedToLog] = useState(false);
+  const [syncState, setSyncState] = useState<'idle' | 'syncing' | 'synced' | 'queued'>('idle');
 
   const score = scoreThi(answers);
   const band = thiBandFor(score);
@@ -52,9 +53,10 @@ export const TinnitusThiInventory: React.FC<Props> = ({ onSaved }) => {
     setAnswers({});
     setSubmitted(false);
     setSavedToLog(false);
+    setSyncState('idle');
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const result: ThiResult = {
       id: crypto.randomUUID(),
       date: new Date().toISOString().slice(0, 10),
@@ -62,10 +64,16 @@ export const TinnitusThiInventory: React.FC<Props> = ({ onSaved }) => {
       grade: band.grade,
       createdAt: new Date().toISOString(),
     };
+    // Local save first — it must not depend on the network.
     saveThiResult(result);
     saveThiToSymptomLog(score, band.label);
     setSavedToLog(true);
     onSaved?.(result);
+
+    // Then push to PROMResponse so the audiologist can see the trend.
+    setSyncState('syncing');
+    const sent = await syncThiToServer(score, band.grade, answers);
+    setSyncState(sent ? 'synced' : 'queued');
   };
 
   if (submitted) {
@@ -124,6 +132,29 @@ export const TinnitusThiInventory: React.FC<Props> = ({ onSaved }) => {
             {savedToLog ? <Check className="w-4 h-4" /> : <Save className="w-4 h-4" />}
             {savedToLog ? (hi ? 'लॉग में सहेजा गया' : 'Saved to log') : (hi ? 'लक्षण लॉग में सहेजें' : 'Save to Symptom Log')}
           </button>
+          {syncState !== 'idle' && (
+            <span
+              className={`inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg ${
+                syncState === 'synced'
+                  ? 'text-emerald-700 dark:text-emerald-300'
+                  : 'text-slate-500 dark:text-slate-400'
+              }`}
+            >
+              {syncState === 'syncing' && (hi ? 'ऑडियोलॉजी को भेजा जा रहा है…' : 'Sending to Audiology…')}
+              {syncState === 'synced' && (
+                <>
+                  <Check className="w-3.5 h-3.5" />
+                  {hi ? 'ऑडियोलॉजी रिकॉर्ड में जोड़ा गया' : 'Added to your Audiology record'}
+                </>
+              )}
+              {syncState === 'queued' && (
+                <>
+                  <CloudOff className="w-3.5 h-3.5" />
+                  {hi ? 'ऑफ़लाइन — अगली बार अपने आप भेजा जाएगा' : 'Offline — will send automatically next time'}
+                </>
+              )}
+            </span>
+          )}
           <button onClick={() => window.print()} className="btn-outline inline-flex items-center gap-2">
             <Printer className="w-4 h-4" />
             {hi ? 'रिपोर्ट प्रिंट करें' : 'Print / Download Report'}

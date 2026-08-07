@@ -47,6 +47,8 @@ export const STORAGE_KEYS = {
   sessions: 'id-tinnitus-sessions',
   thi: 'id-tinnitus-thi',
   symptomLog: 'id-symptom-log',
+  /** THI results captured offline and still owed to the server. */
+  thiOutbox: 'id-tinnitus-thi-outbox',
 };
 
 /**
@@ -190,6 +192,77 @@ export function saveThiToSymptomLog(score: number, gradeLabel: string): void {
   } catch {
     // ignore local storage error
   }
+}
+
+/* --------------------------------------------------------------- server sync */
+
+export interface ThiOutboxEntry {
+  score: number;
+  grade: number;
+  answers: Record<string, number>;
+  queuedAt: string;
+}
+
+/**
+ * Post a THI-25 result to PROMResponse, the table the schema has always named THI in but
+ * which nothing wrote until now. Without this the score is invisible to the clinician and
+ * dies with the browser profile.
+ *
+ * This is an offline-first PWA, so a failed post is not an error path — the result is queued
+ * and retried on the next successful save. Never throws: the local save has already happened
+ * by the time this runs, and a sync failure must not cost the patient their score.
+ */
+export async function syncThiToServer(
+  score: number,
+  grade: number,
+  answers: Record<string, number>
+): Promise<boolean> {
+  const queued = flushThiOutbox();
+  const pending: ThiOutboxEntry[] = [
+    ...queued,
+    { score, grade, answers, queuedAt: new Date().toISOString() },
+  ];
+
+  const stillOwed: ThiOutboxEntry[] = [];
+  let allSent = true;
+
+  for (const entry of pending) {
+    const sent = await postThi(entry);
+    if (!sent) {
+      stillOwed.push(entry);
+      allSent = false;
+    }
+  }
+
+  writeJson(STORAGE_KEYS.thiOutbox, stillOwed);
+  return allSent;
+}
+
+async function postThi(entry: ThiOutboxEntry): Promise<boolean> {
+  try {
+    const res = await fetch('/api/proms', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        instrumentName: 'THI',
+        score: entry.score,
+        answers: { ...entry.answers, grade: entry.grade, capturedAt: entry.queuedAt },
+      }),
+    });
+    // 400 (bad payload) and 403 (wrong patient) will never succeed — drop rather than queue
+    // forever. 401 is different: the patient may simply not have signed in yet, and that is
+    // the common case on a shared OPD device, so it stays queued.
+    if (!res.ok) return res.status === 400 || res.status === 403;
+    const data = await res.json();
+    return data.success === true;
+  } catch {
+    // Offline, or no session. Keep it queued.
+    return false;
+  }
+}
+
+function flushThiOutbox(): ThiOutboxEntry[] {
+  return readJson<ThiOutboxEntry[]>(STORAGE_KEYS.thiOutbox, []).slice(0, 20);
 }
 
 export function totalMinutes(sessions: TinnitusSession[]): number {

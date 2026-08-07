@@ -186,6 +186,22 @@ const MAX_SAMPLE_GAP_MS = 200;
 const NYSTAGMUS_MIN_HZ = 1.0;
 /** Nystagmus heuristic: minimum oscillation amplitude in normalised units. */
 const NYSTAGMUS_MIN_AMPLITUDE = 0.008;
+/**
+ * Nystagmus heuristic: upper bound of the physiological band (Hz). Oscillation
+ * faster than this is landmark jitter, not an eye movement.
+ */
+const NYSTAGMUS_MAX_HZ = 6.0;
+/**
+ * Nystagmus heuristic: how much faster the fast phase must be than the slow
+ * phase before the waveform counts as a sawtooth rather than a voluntary,
+ * roughly symmetric oscillation.
+ */
+const NYSTAGMUS_MIN_ASYMMETRY = 2.0;
+/**
+ * Nystagmus heuristic: mean head velocity (°/s) above which the head counts as
+ * actively rotating, so compensatory eye motion is VOR rather than nystagmus.
+ */
+const NYSTAGMUS_MAX_HEAD_VELOCITY = 15.0;
 
 /**
  * Compute Eye Aspect Ratio (EAR) for blink detection.
@@ -614,18 +630,50 @@ function interpolateGaze(gazeSeries: GazePoint[], t: number): GazePoint | null {
 /* =========================================================== nystagmus heuristic */
 
 /**
- * Simple nystagmus detector based on spectral analysis of the gaze x-signal.
+ * Nystagmus detector for the gaze signal.
  *
- * Nystagmus produces characteristic sawtooth oscillations at 1–6 Hz with
- * alternating slow-phase / fast-phase pattern. We use a zero-crossing rate
- * and RMS amplitude test as a lightweight heuristic.
+ * Nystagmus is a *sawtooth*: a slow drift phase in one direction followed by a
+ * fast corrective flick back. That asymmetry is what separates it from the
+ * roughly sinusoidal, symmetric oscillation a patient produces voluntarily
+ * while tracking a target or performing a VOR drill — both of which land in the
+ * same 1–3 Hz band and would otherwise trip a pure amplitude + rate test,
+ * telling a patient doing their exercises correctly to go see a clinician.
+ *
+ * The flag therefore requires all four of:
+ *   1. Oscillation amplitude above the noise floor.
+ *   2. Frequency inside the physiological 1–6 Hz nystagmus band.
+ *   3. Slow-phase / fast-phase velocity asymmetry (the sawtooth signature).
+ *   4. A head that is not actively rotating — gaze oscillation during a head
+ *      turn is the VOR working, not nystagmus.
  *
  * NOT a clinical diagnostic — a positive flag should prompt clinician review.
+ *
+ * @param gazeHistory Gaze samples for the window under test.
+ * @param headSeries  Optional head yaw over the same window. When supplied, an
+ *                    actively rotating head suppresses the flag.
  */
-export function detectNystagmusHeuristic(gazeHistory: GazePoint[]): NystagmusFlag {
+export function detectNystagmusHeuristic(
+  gazeHistory: GazePoint[],
+  headSeries?: Array<{ t: number; yaw: number }>,
+): NystagmusFlag {
   const NONE: NystagmusFlag = { detected: false, frequencyHz: 0, direction: 'none', amplitude: 0 };
 
   if (gazeHistory.length < 20) return NONE;
+
+  // A rotating head drives compensatory eye movement by design; scoring that as
+  // nystagmus would fire on every VOR repetition.
+  if (headSeries && headSeries.length >= 2) {
+    const headV: number[] = [];
+    for (let i = 1; i < headSeries.length; i++) {
+      const gapMs = headSeries[i].t - headSeries[i - 1].t;
+      if (gapMs <= 0 || gapMs > MAX_SAMPLE_GAP_MS) continue;
+      headV.push(Math.abs(headSeries[i].yaw - headSeries[i - 1].yaw) / (gapMs / 1000));
+    }
+    if (headV.length > 0) {
+      const meanHeadV = headV.reduce((s, v) => s + v, 0) / headV.length;
+      if (meanHeadV > NYSTAGMUS_MAX_HEAD_VELOCITY) return NONE;
+    }
+  }
 
   // De-mean the x and y signals
   const xs = gazeHistory.map(p => p.x);
@@ -649,7 +697,10 @@ export function detectNystagmusHeuristic(gazeHistory: GazePoint[]): NystagmusFla
   const durationSec = (gazeHistory[gazeHistory.length - 1].t - gazeHistory[0].t) / 1000;
   const frequencyHz = durationSec > 0 ? zeroCrossings / (2 * durationSec) : 0;
 
-  if (frequencyHz < NYSTAGMUS_MIN_HZ) return NONE;
+  if (frequencyHz < NYSTAGMUS_MIN_HZ || frequencyHz > NYSTAGMUS_MAX_HZ) return NONE;
+
+  // Sawtooth test: real nystagmus flicks back far faster than it drifts out.
+  if (slowFastAsymmetry(dominant, gazeHistory) < NYSTAGMUS_MIN_ASYMMETRY) return NONE;
 
   return {
     detected: true,
@@ -657,6 +708,30 @@ export function detectNystagmusHeuristic(gazeHistory: GazePoint[]): NystagmusFla
     direction,
     amplitude: parseFloat(amplitude.toFixed(4)),
   };
+}
+
+/**
+ * Ratio of mean velocity in the faster direction to the slower one along a
+ * de-meaned axis. A symmetric sine returns ≈1; a sawtooth returns well above 1.
+ */
+function slowFastAsymmetry(signal: number[], samples: GazePoint[]): number {
+  let posSum = 0, posN = 0;
+  let negSum = 0, negN = 0;
+
+  for (let i = 1; i < signal.length; i++) {
+    const gapMs = samples[i].t - samples[i - 1].t;
+    if (gapMs <= 0 || gapMs > MAX_SAMPLE_GAP_MS) continue;
+    const v = (signal[i] - signal[i - 1]) / (gapMs / 1000);
+    if (v > 0) { posSum += v; posN++; }
+    else if (v < 0) { negSum -= v; negN++; }
+  }
+
+  if (posN === 0 || negN === 0) return 0;
+  const posMean = posSum / posN;
+  const negMean = negSum / negN;
+  if (posMean === 0 || negMean === 0) return 0;
+
+  return Math.max(posMean / negMean, negMean / posMean);
 }
 
 function rms(values: number[]): number {
@@ -806,7 +881,7 @@ export function analyseSession(
   const fixations = detectFixations(gazeHistory);
   const saccades = detectSaccades(gazeHistory);
   const vorScore = headSeries.length > 4 ? scoreVOR(gazeHistory, headSeries) : null;
-  const nystagmus = detectNystagmusHeuristic(gazeHistory);
+  const nystagmus = detectNystagmusHeuristic(gazeHistory, headSeries);
 
   const meanFixationDuration = fixations.length > 0
     ? fixations.reduce((s, f) => s + f.duration, 0) / fixations.length

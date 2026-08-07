@@ -5,7 +5,7 @@
  * scripts/test-tinnitus.mjs.
  */
 
-export type RxEngine = 'ACRN' | 'NOTCH' | 'BROAD';
+export type RxEngine = 'ACRN' | 'NOTCH' | 'BROAD' | 'BINAURAL' | 'SOUNDSCAPE';
 
 export interface TinnitusRx {
   /** Matched tinnitus frequency in Hz. */

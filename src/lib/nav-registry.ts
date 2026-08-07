@@ -1,7 +1,7 @@
 import {
   Compass, ClipboardList, Activity, ClipboardCheck, Users, BookOpenText,
   LifeBuoy, Podcast, Download, ShieldAlert, Award, ShieldCheck,
-  Stethoscope, FileText, BarChart3, Building2, RotateCcw, Wind, Ear, AudioWaveform, Eye,
+  Stethoscope, FileText, BarChart3, Building2, RotateCcw, Wind, Ear, AudioWaveform, Eye, Mic,
 } from 'lucide-react';
 
 export interface NavItem {
@@ -106,6 +106,15 @@ export const navGroups: NavGroup[] = [
         descriptionHi: 'पिच मिलान और ACRN साउंड थेरेपी',
         icon: AudioWaveform,
         keywords: 'tinnitus ringing acrn masking notched sound therapy pitch match thi loudness habituation trt',
+      },
+      {
+        href: '/rehab/voice',
+        label: 'Voice Recovery',
+        labelHi: 'स्वर सुधार',
+        description: 'Post-op voice & swallowing tracking',
+        descriptionHi: 'ऑपरेशन के बाद आवाज़ और निगलने की निगरानी',
+        icon: Mic,
+        keywords: 'voice hoarse dysphonia laryngeal larynx cordectomy laryngectomy phonation mpt cpps ddk vhi vhi-10 eat-10 swallow dysphagia speech chemoradiation stridor',
       },
       {
         href: '/self-assessment',

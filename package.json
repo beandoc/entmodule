@@ -12,7 +12,9 @@
     "db:seed": "node scripts/seed.mjs",
     "test:interop": "node scripts/test-interop.mjs",
     "test:tinnitus": "node scripts/test-tinnitus.mjs",
-    "test:vestibular": "node scripts/test-vestibular.mjs"
+    "test:vestibular": "node scripts/test-vestibular.mjs",
+    "test:gaze": "node scripts/test-gaze.mjs",
+    "test:voice": "node scripts/test-voice.mjs && node scripts/test-voice-rx.mjs"
   },
   "dependencies": {
     "@prisma/client": "^5.10.0",

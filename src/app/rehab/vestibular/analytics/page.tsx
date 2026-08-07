@@ -1,4 +1,5 @@
 import { AIGazeAnalyticsEngine } from '@/components/AIGazeAnalyticsEngine';
+import { ClinicalErrorBoundary } from '@/components/ClinicalErrorBoundary';
 
 export const metadata = {
   title: 'AI Gaze Analytics | Vestibular Rehab | i-Dhanwantari',
@@ -7,5 +8,9 @@ export const metadata = {
 };
 
 export default function GazeAnalyticsPage() {
-  return <AIGazeAnalyticsEngine />;
+  return (
+    <ClinicalErrorBoundary componentName="AIGazeAnalyticsEngine">
+      <AIGazeAnalyticsEngine />
+    </ClinicalErrorBoundary>
+  );
 }

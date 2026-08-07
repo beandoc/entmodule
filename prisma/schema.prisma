@@ -1,6 +1,6 @@
 datasource db {
   provider = "sqlite"
-  url      = "file:./dev.db"
+  url      = env("DATABASE_URL")
 }
 
 generator client {
@@ -376,6 +376,9 @@ model PatientRef {
 
   guardianLinks  GuardianLink[]
   orders         EducationOrder[]
+  promResponses  PROMResponse[]
+  voiceSessions  VoiceSession[]
+  voiceAlerts    VoiceAlert[]
 }
 
 model GuardianLink {
@@ -453,15 +456,96 @@ model EducationAcknowledgement {
   educationOrder   EducationOrder @relation(fields: [educationOrderId], references: [id], onDelete: Cascade)
 }
 
+// PROMs may be submitted inside an education order (clinician-ordered) or
+// standalone from a rehab module (patient-initiated). Both foreign keys are
+// therefore optional; the API layer enforces that at least one is present.
 model PROMResponse {
-  id               String         @id @default(uuid())
-  educationOrderId String
-  instrumentName   String         // SNOT-22, THI, VHI-10, HHIE-S, DHI, EAT-10
+  id               String          @id @default(uuid())
+  educationOrderId String?
+  patientRefId     String?
+  instrumentName   String          // SNOT-22, THI, VHI-10, HHIE-S, DHI, EAT-10
   score            Float
   answersJson      String
-  submittedAt      DateTime       @default(now())
+  submittedAt      DateTime        @default(now())
 
-  educationOrder   EducationOrder @relation(fields: [educationOrderId], references: [id], onDelete: Cascade)
+  educationOrder   EducationOrder? @relation(fields: [educationOrderId], references: [id], onDelete: Cascade)
+  patientRef       PatientRef?     @relation(fields: [patientRefId], references: [id], onDelete: Cascade)
+
+  @@index([patientRefId, instrumentName, submittedAt])
+}
+
+// ----------------------------------------------------
+// Post-Op Voice Recovery Monitoring (laryngology)
+// ----------------------------------------------------
+
+// One completed acoustic protocol run. Scope is cohorts that retain a glottal
+// source - partial laryngectomy / cordectomy and organ-preservation
+// chemoradiation. Total laryngectomy (TE / oesophageal / electrolarynx speech)
+// is deliberately excluded: F0 is absent or meaningless and the MPT and CPPS
+// distributions do not transfer.
+//
+// Acoustic values are only ever interpreted as within-patient change against
+// this patient's own baseline. Absolute CPPS is not portable across microphones,
+// distances or analysis windows, so no population cutoff is stored or applied.
+model VoiceSession {
+  id                     String       @id @default(uuid())
+  patientRefId           String
+  cohort                 String       // partial_laryngectomy, chemoradiation
+  recordedAt             DateTime     @default(now())
+
+  // Maximum phonation time - best of three trials, seconds.
+  mptSec                 Float?
+  mptTrialsJson          String?      // number[] of all trials, for audit
+
+  // Smoothed cepstral peak prominence, dB, from a separate comfortable-effort
+  // phonation. Never computed from the MPT take: MPT drives the patient to
+  // residual volume and voice quality collapses in the final seconds.
+  cppsDb                 Float?
+  cppsVoicedRatio        Float?       // fraction of frames passing the voicing gate
+
+  // Diadochokinesis. AMR = /pa/, SMR = /pa-ta-ka/. Interval CV is the
+  // neuromuscular-consistency measure and matters more than raw rate.
+  ddkAmrRate             Float?       // syllables/sec
+  ddkSmrRate             Float?       // sequences/sec
+  ddkIntervalCvPct       Float?
+
+  // Recording conditions. Longitudinal comparison is only valid within one
+  // device: iOS Safari does not reliably honour autoGainControl:false and will
+  // report the constraint as applied regardless, so the settings actually
+  // granted are persisted verbatim rather than assumed.
+  noiseFloorDb           Float?
+  deviceFingerprint      String?
+  appliedConstraintsJson String?      // MediaTrackSettings as granted
+  qualityFlagsJson       String?      // clipping, low SNR, short takes
+
+  audioRetained          Boolean      @default(false) // raw WAV kept only on separate explicit consent
+
+  patientRef             PatientRef   @relation(fields: [patientRefId], references: [id], onDelete: Cascade)
+  alerts                 VoiceAlert[]
+
+  @@index([patientRefId, recordedAt])
+}
+
+// A surfaced concern requiring clinician review. Symptom-driven flags carry
+// nearly all of the safety value and fire immediately; acoustic flags require a
+// sustained breach of a within-patient control limit and never fire on a single
+// dip. This is triage for review, never a recurrence determination.
+model VoiceAlert {
+  id             String        @id @default(uuid())
+  patientRefId   String
+  voiceSessionId String?
+  kind           String        // stridor, hemoptysis, odynophagia, neck_lump, aspiration, weight_loss, rest_dyspnoea, mpt_decline, cpps_decline, ddk_decline
+  source         String        // symptom, acoustic
+  severity       String        // urgent, review
+  detailJson     String?
+  triggeredAt    DateTime      @default(now())
+  acknowledgedAt DateTime?
+  acknowledgedBy String?       // Practitioner HPR ID
+
+  patientRef     PatientRef    @relation(fields: [patientRefId], references: [id], onDelete: Cascade)
+  voiceSession   VoiceSession? @relation(fields: [voiceSessionId], references: [id], onDelete: SetNull)
+
+  @@index([patientRefId, acknowledgedAt])
 }
 
 model ContentGapSignal {

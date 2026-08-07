@@ -12,7 +12,8 @@ import { TinnitusThiInventory } from './TinnitusThiInventory';
 import {
   TinnitusEngine, AUDIO_LIMITS, ACRN_DEFAULTS, ACRN_LIMITS,
   generateAcrnFrequencies, clampFrequency,
-  type NoiseColor, type EngineMode,
+  type NoiseColor, type EngineMode, type SoundscapePreset, type BinauralPreset, type EqGains,
+  BINAURAL_PRESETS, EQ_FREQUENCIES, DEFAULT_EQ_GAINS,
 } from '@/lib/tinnitus-audio';
 import {
   decodeRx, encodeRx, loadRx, saveRx, loadSessions, saveSession, loadThiHistory, totalMinutes,
@@ -20,7 +21,7 @@ import {
 } from '@/lib/tinnitus-rx';
 
 type TabId = 'setup' | 'therapy' | 'track' | 'learn';
-type SetupStep = 'headphones' | 'pitch' | 'octave' | 'level';
+type SetupStep = 'triage' | 'headphones' | 'pitch' | 'octave' | 'level';
 
 const OCTAVE_ANCHORS = [250, 500, 1000, 2000, 4000, 6000, 8000, 10000, 12000];
 const SESSION_PRESETS = [15, 30, 60, 120];
@@ -29,6 +30,8 @@ const ENGINE_TO_MODE: Record<RxEngine, Exclude<EngineMode, 'idle' | 'pitch'>> = 
   ACRN: 'acrn',
   NOTCH: 'notched',
   BROAD: 'broadband',
+  BINAURAL: 'binaural',
+  SOUNDSCAPE: 'soundscape',
 };
 
 /** Log-scaled slider position so the low frequencies are not crushed into a few pixels. */
@@ -84,12 +87,21 @@ export const TinnitusReliefStudio: React.FC = () => {
   const hi = locale === 'hi';
 
   const [activeTab, setActiveTab] = useState<TabId>('setup');
-  const [setupStep, setSetupStep] = useState<SetupStep>('headphones');
+  const [setupStep, setSetupStep] = useState<SetupStep>('triage');
+
+  const [triageSide, setTriageSide] = useState<'both' | 'left' | 'right'>('both');
+  const [isPulsatile, setIsPulsatile] = useState(false);
+  const [hasSuddenLoss, setHasSuddenLoss] = useState(false);
+  const [hasVertigo, setHasVertigo] = useState(false);
 
   const [frequency, setFrequency] = useState(8000);
   const [levelDb, setLevelDb] = useState(AUDIO_LIMITS.DEFAULT_LEVEL_DB);
   const [pan, setPan] = useState(0);
   const [noiseColor, setNoiseColor] = useState<NoiseColor>('pink');
+  const [bgNoiseColor, setBgNoiseColor] = useState<NoiseColor | 'none'>('none');
+  const [soundscape, setSoundscape] = useState<SoundscapePreset>('ocean');
+  const [binauralPreset, setBinauralPreset] = useState<BinauralPreset>('alpha');
+  const [eqGains, setEqGainsState] = useState<EqGains>([...DEFAULT_EQ_GAINS]);
   const [engineChoice, setEngineChoice] = useState<RxEngine>('ACRN');
   const [loopRepeat, setLoopRepeat] = useState(ACRN_DEFAULTS.loopRepeat);
   const [restLength, setRestLength] = useState(ACRN_DEFAULTS.restLength);
@@ -184,6 +196,8 @@ export const TinnitusReliefStudio: React.FC = () => {
     return () => clearInterval(id);
   }, [isTherapyPlaying, remainingSeconds, hi, stopAll]);
 
+  useEffect(() => { engineRef.current?.setEqGains(eqGains); }, [eqGains]);
+
   const play = async (mode: Exclude<EngineMode, 'idle'>) => {
     const engine = getEngine();
     await engine.start(mode, {
@@ -191,6 +205,10 @@ export const TinnitusReliefStudio: React.FC = () => {
       levelDb,
       pan,
       noiseColor,
+      bgNoiseColor,
+      soundscape,
+      binaural: binauralPreset,
+      eqGains,
       acrn: { bpm: ACRN_DEFAULTS.bpm, loopRepeat, restLength },
     });
     setPlayingMode(mode);
@@ -433,11 +451,11 @@ export const TinnitusReliefStudio: React.FC = () => {
                 <div className="flex items-center gap-2">
                   <Ear className="w-5 h-5 text-navy-700 dark:text-navy-300" />
                   <h2 className="font-bold text-slate-900 dark:text-white">
-                    {hi ? 'या स्वयं अपनी टिनिटस पिच खोजें' : 'Or find your tinnitus pitch yourself'}
+                    {hi ? 'स्वयं टिनिटस मैपिंग और स्क्रीनिंग' : 'Tinnitus Self-Mapping & Clinical Screening'}
                   </h2>
                 </div>
                 <div className="flex gap-1.5">
-                  {(['headphones', 'pitch', 'octave', 'level'] as SetupStep[]).map((step, i) => (
+                  {(['triage', 'headphones', 'pitch', 'octave', 'level'] as SetupStep[]).map((step, i) => (
                     <span
                       key={step}
                       className={`w-7 h-7 rounded-full text-[11px] font-bold flex items-center justify-center border ${
@@ -451,6 +469,138 @@ export const TinnitusReliefStudio: React.FC = () => {
                   ))}
                 </div>
               </div>
+
+              {setupStep === 'triage' && (
+                <div className="space-y-4">
+                  <div className="flex items-start gap-3 p-4 rounded-xl bg-navy-50 dark:bg-ink-950 border border-navy-100 dark:border-ink-800">
+                    <ShieldAlert className="w-5 h-5 text-navy-700 dark:text-navy-300 shrink-0 mt-0.5" />
+                    <div className="space-y-1 text-xs text-slate-700 dark:text-slate-300 leading-relaxed">
+                      <p className="font-bold text-navy-900 dark:text-navy-100">
+                        {hi ? 'चरणात्मक लक्षण स्क्रीनिंग (Clinical Safety Screen)' : 'Step 1: Clinical Safety Screen'}
+                      </p>
+                      <p>
+                        {hi
+                          ? 'सटीक और सुरक्षित मैपिंग के लिए पहले अपने टिनिटस के प्रकार की जांच करें:'
+                          : 'Before mapping your tinnitus pitch, confirm your symptom characteristics:'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                    <div className="p-3 rounded-xl border border-slate-200 dark:border-ink-800 bg-white dark:bg-ink-900 space-y-2">
+                      <label className="font-bold block text-slate-700 dark:text-slate-300">
+                        {hi ? 'ध्वनि किस कान में है?' : 'Tinnitus Location:'}
+                      </label>
+                      <div className="flex gap-2">
+                        {(['both', 'left', 'right'] as const).map((side) => (
+                          <button
+                            key={side}
+                            onClick={() => setTriageSide(side)}
+                            className={`flex-1 py-1.5 rounded-lg font-semibold border text-center transition-all ${
+                              triageSide === side
+                                ? 'bg-navy-700 text-white border-navy-700'
+                                : 'bg-slate-50 dark:bg-ink-950 border-slate-200 dark:border-ink-800 text-slate-700 dark:text-slate-300'
+                            }`}
+                          >
+                            {side === 'both' ? (hi ? 'दोनों' : 'Both') : side === 'left' ? (hi ? 'बायाँ' : 'Left') : (hi ? 'दायाँ' : 'Right')}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="p-3 rounded-xl border border-slate-200 dark:border-ink-800 bg-white dark:bg-ink-900 space-y-2">
+                      <label className="font-bold block text-slate-700 dark:text-slate-300">
+                        {hi ? 'क्या आवाज़ दिल की धड़कन जैसी है?' : 'Pulsatile (Heartbeat rhythm)?'}
+                      </label>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setIsPulsatile(true)}
+                          className={`flex-1 py-1.5 rounded-lg font-semibold border text-center transition-all ${
+                            isPulsatile ? 'bg-amber-600 text-white border-amber-600' : 'bg-slate-50 dark:bg-ink-950 border-slate-200 text-slate-700'
+                          }`}
+                        >
+                          {hi ? 'हाँ (Pulsatile)' : 'Yes'}
+                        </button>
+                        <button
+                          onClick={() => setIsPulsatile(false)}
+                          className={`flex-1 py-1.5 rounded-lg font-semibold border text-center transition-all ${
+                            !isPulsatile ? 'bg-navy-700 text-white border-navy-700' : 'bg-slate-50 dark:bg-ink-950 border-slate-200 text-slate-700'
+                          }`}
+                        >
+                          {hi ? 'नहीं' : 'No'}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="p-3 rounded-xl border border-slate-200 dark:border-ink-800 bg-white dark:bg-ink-900 space-y-2">
+                      <label className="font-bold block text-slate-700 dark:text-slate-300">
+                        {hi ? '72 घंटे में अचानक सुनने में कमी?' : 'Sudden hearing loss (<72 hrs)?'}
+                      </label>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setHasSuddenLoss(true)}
+                          className={`flex-1 py-1.5 rounded-lg font-semibold border text-center transition-all ${
+                            hasSuddenLoss ? 'bg-red-600 text-white border-red-600' : 'bg-slate-50 dark:bg-ink-950 border-slate-200 text-slate-700'
+                          }`}
+                        >
+                          {hi ? 'हाँ' : 'Yes'}
+                        </button>
+                        <button
+                          onClick={() => setHasSuddenLoss(false)}
+                          className={`flex-1 py-1.5 rounded-lg font-semibold border text-center transition-all ${
+                            !hasSuddenLoss ? 'bg-navy-700 text-white border-navy-700' : 'bg-slate-50 dark:bg-ink-950 border-slate-200 text-slate-700'
+                          }`}
+                        >
+                          {hi ? 'नहीं' : 'No'}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="p-3 rounded-xl border border-slate-200 dark:border-ink-800 bg-white dark:bg-ink-900 space-y-2">
+                      <label className="font-bold block text-slate-700 dark:text-slate-300">
+                        {hi ? 'चक्कर या सन्तुलन बिगड़ना?' : 'Associated Dizziness / Vertigo?'}
+                      </label>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setHasVertigo(true)}
+                          className={`flex-1 py-1.5 rounded-lg font-semibold border text-center transition-all ${
+                            hasVertigo ? 'bg-amber-600 text-white border-amber-600' : 'bg-slate-50 dark:bg-ink-950 border-slate-200 text-slate-700'
+                          }`}
+                        >
+                          {hi ? 'हाँ' : 'Yes'}
+                        </button>
+                        <button
+                          onClick={() => setHasVertigo(false)}
+                          className={`flex-1 py-1.5 rounded-lg font-semibold border text-center transition-all ${
+                            !hasVertigo ? 'bg-navy-700 text-white border-navy-700' : 'bg-slate-50 dark:bg-ink-950 border-slate-200 text-slate-700'
+                          }`}
+                        >
+                          {hi ? 'नहीं' : 'No'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {(triageSide !== 'both' || isPulsatile || hasSuddenLoss || hasVertigo) && (
+                    <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200 text-xs space-y-1">
+                      <p className="font-bold flex items-center gap-1.5">
+                        <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                        {hi ? 'ईएनटी परामर्श सलाह:' : 'ENT Referral Recommended:'}
+                      </p>
+                      <p className="leading-relaxed">
+                        {isPulsatile || hasSuddenLoss
+                          ? (hi ? 'अचानक सुनवाई हानि या पल्सटाइल टिनिटस के लिए तुरंत ईएनटी डॉक्टर से जांच कराएं।' : 'Urgent ENT consultation recommended for sudden hearing loss or pulsatile tinnitus.')
+                          : (hi ? 'एकतरफ़ा टिनिटस या चक्कर के लक्षणों के लिए ईएनटी ऑडियोलॉजी जांच कराने की सलाह दी जाती है।' : 'Unilateral tinnitus or dizziness warrants clinical ENT & audiometric assessment.')}
+                      </p>
+                    </div>
+                  )}
+
+                  <button onClick={() => setSetupStep('headphones')} className="btn-navy w-full inline-flex items-center justify-center gap-2">
+                    {hi ? 'आगे बढ़ें — हेडफोन जांचें' : 'Continue — Test Headphones'}
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
 
               {setupStep === 'headphones' && (
                 <div className="space-y-4">
@@ -537,18 +687,57 @@ export const TinnitusReliefStudio: React.FC = () => {
                     <Info className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
                     <p className="text-xs text-amber-900 dark:text-amber-200 leading-relaxed">
                       {hi
-                        ? 'ऑक्टेव भ्रम की जांच: लोग अक्सर असली पिच से एक ऑक्टेव ऊपर या नीचे चुन लेते हैं। नीचे दोनों टोन सुनें और जो बेहतर मेल खाए उसे चुनें।'
-                        : 'Octave confusion check: people often pick a tone one octave above or below their true pitch. Listen to both and keep whichever matches better.'}
+                        ? 'ऑक्टेव भ्रम परीक्षण (Octave Confusion Check): लोग अक्सर वास्तविक पिच से एक ऑक्टेव ऊपर या नीचे का टोन चुन लेते हैं। नीचे दिए 3 टोन सुनकर पुष्टि करें कि कौन सी पिच आपके टिनिटस से सबसे बेहतर मेल खाती है:'
+                        : 'Octave Confusion Challenge: People often misidentify their pitch by one octave. Listen to all 3 choices below to confirm your true match:'}
                     </p>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <button onClick={() => previewFrequency(frequency)} className="p-4 rounded-xl border border-slate-200 dark:border-ink-800 bg-white dark:bg-ink-900 text-left hover:border-navy-300 transition-all">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">{hi ? 'विकल्प A' : 'Option A'}</span>
-                      <span className="font-mono font-bold text-lg text-navy-800 dark:text-navy-200">{frequency} Hz</span>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <button
+                      onClick={() => previewFrequency(Math.round(frequency / 2))}
+                      className={`p-4 rounded-xl border text-left transition-all ${
+                        Math.abs(frequency - Math.round(frequency / 2)) < 1
+                          ? 'border-navy-700 bg-navy-50 dark:bg-navy-950/60 ring-2 ring-navy-700/20'
+                          : 'border-slate-200 dark:border-ink-800 bg-white dark:bg-ink-900 hover:border-navy-300'
+                      }`}
+                    >
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                        {hi ? 'विकल्प 1 (एक ऑक्टेव नीचे)' : 'Option 1 (-1 Octave)'}
+                      </span>
+                      <span className="font-mono font-bold text-lg text-navy-800 dark:text-navy-200">
+                        {Math.round(frequency / 2)} Hz
+                      </span>
                     </button>
-                    <button onClick={() => previewFrequency(Math.round(frequency / 2))} className="p-4 rounded-xl border border-slate-200 dark:border-ink-800 bg-white dark:bg-ink-900 text-left hover:border-navy-300 transition-all">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">{hi ? 'विकल्प B (एक ऑक्टेव नीचे)' : 'Option B (one octave down)'}</span>
-                      <span className="font-mono font-bold text-lg text-navy-800 dark:text-navy-200">{Math.round(frequency / 2)} Hz</span>
+
+                    <button
+                      onClick={() => previewFrequency(frequency)}
+                      className={`p-4 rounded-xl border text-left transition-all ${
+                        true
+                          ? 'border-navy-700 bg-navy-50 dark:bg-navy-950/60 ring-2 ring-navy-700/20'
+                          : 'border-slate-200 dark:border-ink-800 bg-white dark:bg-ink-900 hover:border-navy-300'
+                      }`}
+                    >
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-navy-600 dark:text-navy-300 block">
+                        {hi ? 'विकल्प 2 (वर्तमान चयन)' : 'Option 2 (Current Pitch)'}
+                      </span>
+                      <span className="font-mono font-bold text-lg text-navy-900 dark:text-navy-100">
+                        {frequency} Hz
+                      </span>
+                    </button>
+
+                    <button
+                      onClick={() => previewFrequency(Math.min(14000, Math.round(frequency * 2)))}
+                      className={`p-4 rounded-xl border text-left transition-all ${
+                        Math.abs(frequency - Math.min(14000, Math.round(frequency * 2))) < 1
+                          ? 'border-navy-700 bg-navy-50 dark:bg-navy-950/60 ring-2 ring-navy-700/20'
+                          : 'border-slate-200 dark:border-ink-800 bg-white dark:bg-ink-900 hover:border-navy-300'
+                      }`}
+                    >
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                        {hi ? 'विकल्प 3 (एक ऑक्टेव ऊपर)' : 'Option 3 (+1 Octave)'}
+                      </span>
+                      <span className="font-mono font-bold text-lg text-navy-800 dark:text-navy-200">
+                        {Math.min(14000, Math.round(frequency * 2))} Hz
+                      </span>
                     </button>
                   </div>
                   <div className="flex flex-col sm:flex-row gap-3">
@@ -652,11 +841,13 @@ export const TinnitusReliefStudio: React.FC = () => {
                 <Waves className="w-5 h-5 text-navy-700 dark:text-navy-300" />
                 {hi ? 'थेरेपी चुनें' : 'Choose your therapy'}
               </h2>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                 {([
-                  { id: 'ACRN' as RxEngine, name: hi ? 'ACRN 4-टोन' : 'ACRN 4-tone', desc: hi ? 'आपकी पिच के चारों ओर चार टोन, हर चक्र में क्रम बदलता है' : 'Four tones bracketing your pitch, re-ordered every cycle' },
+                  { id: 'ACRN' as RxEngine, name: hi ? 'ACRN 4-टोन' : 'ACRN 4-tone', desc: hi ? 'आपकी पिच के चारों ओर चार टोन' : 'Four tones bracketing your pitch' },
                   { id: 'NOTCH' as RxEngine, name: hi ? 'नॉच्ड शोर' : 'Notched noise', desc: hi ? 'आपकी आवृत्ति पर कटा हुआ शोर' : 'Noise with your frequency filtered out' },
                   { id: 'BROAD' as RxEngine, name: hi ? 'ब्रॉडबैंड मास्कर' : 'Broadband masker', desc: hi ? 'सादा शोर जो टिनिटस को ढकता है' : 'Plain noise that covers the tinnitus' },
+                  { id: 'BINAURAL' as RxEngine, name: hi ? 'बायनौरल बीट्स (Neural)' : 'Binaural Beats (Neural)', desc: hi ? 'नींद और तनाव प्रबंधन हेतु अल्फा/डेल्टा लहरें' : 'Alpha/Delta brainwave entrainment for sleep & relaxation' },
+                  { id: 'SOUNDSCAPE' as RxEngine, name: hi ? 'प्राकृतिक ध्वनियां' : 'Natural Soundscapes', desc: hi ? 'समुद्र की लहरें, बारिश व झरने का मास्क' : 'Ocean waves, rainfall & stream soundscapes' },
                 ]).map((option) => {
                   const active = engineChoice === option.id;
                   return (
@@ -719,6 +910,94 @@ export const TinnitusReliefStudio: React.FC = () => {
                       onChange={setRestLength}
                     />
                   </div>
+                  <div className="pt-2 border-t border-slate-200 dark:border-ink-800 space-y-2">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
+                      {hi ? 'पृष्ठभूमि शोर मास्कर (वैकल्पिक)' : 'Background Noise Masker (Optional)'}
+                    </span>
+                    <div className="grid grid-cols-4 gap-2">
+                      {([
+                        { id: 'none', label: hi ? 'कोई नहीं' : 'None' },
+                        { id: 'white', label: hi ? 'सफेद' : 'White' },
+                        { id: 'pink', label: hi ? 'गुलाबी' : 'Pink' },
+                        { id: 'brown', label: hi ? 'भूरा' : 'Brown' },
+                      ] as { id: NoiseColor | 'none'; label: string }[]).map((option) => (
+                        <button
+                          key={option.id}
+                          type="button"
+                          onClick={() => {
+                            stopAll();
+                            setBgNoiseColor(option.id);
+                          }}
+                          className={`py-1.5 rounded-lg text-xs font-bold border transition-all ${
+                            bgNoiseColor === option.id
+                              ? 'bg-navy-700 text-white border-navy-700'
+                              : 'bg-white dark:bg-ink-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-ink-800 hover:border-navy-300'
+                          }`}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {engineChoice === 'BINAURAL' && (
+                <div className="rounded-xl bg-slate-50 dark:bg-ink-950 border border-slate-200 dark:border-ink-800 p-4 space-y-3">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
+                    {hi ? 'बायनौरल एंट्रेनमेंट वेव' : 'Binaural Entrainment Wave'}
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {(Object.entries(BINAURAL_PRESETS) as [BinauralPreset, typeof BINAURAL_PRESETS.alpha][]).map(([key, config]) => (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => { stopAll(); setBinauralPreset(key); }}
+                        className={`p-3 rounded-lg border text-left transition-all space-y-1 ${
+                          binauralPreset === key
+                            ? 'bg-navy-700 text-white border-navy-700'
+                            : 'bg-white dark:bg-ink-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-ink-800 hover:border-navy-300'
+                        }`}
+                      >
+                        <div className="font-bold text-xs">{hi ? config.nameHi : config.name}</div>
+                        <div className="text-[10px] opacity-80 leading-relaxed">{hi ? config.descHi : config.desc}</div>
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                    {hi
+                      ? 'नोट: बायनौरल बीट्स केवल स्टीरियो हेडफोन पर ही सही काम करते हैं।'
+                      : 'Note: Binaural beats require stereo headphones for phase entrainment.'}
+                  </p>
+                </div>
+              )}
+
+              {engineChoice === 'SOUNDSCAPE' && (
+                <div className="rounded-xl bg-slate-50 dark:bg-ink-950 border border-slate-200 dark:border-ink-800 p-4 space-y-3">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
+                    {hi ? 'प्राकृतिक माहौल' : 'Natural Ambient Soundscape'}
+                  </span>
+                  <div className="grid grid-cols-3 gap-2">
+                    {([
+                      { id: 'ocean' as SoundscapePreset, label: hi ? 'समुद्र की लहरें' : 'Ocean Waves', desc: hi ? '10-सेकंड चक्र स्वाइल' : '10s swell cycles' },
+                      { id: 'rain' as SoundscapePreset, label: hi ? 'हल्की बारिश' : 'Rainfall', desc: hi ? 'निरंतर हल्की बूंदें' : 'Steady raindrops' },
+                      { id: 'stream' as SoundscapePreset, label: hi ? 'पहाड़ी झरना' : 'Forest Stream', desc: hi ? 'बहते पानी का स्वर' : 'Babbling brook' },
+                    ]).map((option) => (
+                      <button
+                        key={option.id}
+                        type="button"
+                        onClick={() => { stopAll(); setSoundscape(option.id); }}
+                        className={`p-3 rounded-lg text-left border transition-all space-y-1 ${
+                          soundscape === option.id
+                            ? 'bg-navy-700 text-white border-navy-700'
+                            : 'bg-white dark:bg-ink-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-ink-800 hover:border-navy-300'
+                        }`}
+                      >
+                        <div className="font-bold text-xs">{option.label}</div>
+                        <div className="text-[10px] opacity-75">{option.desc}</div>
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
 
@@ -755,6 +1034,53 @@ export const TinnitusReliefStudio: React.FC = () => {
                   )}
                 </div>
               )}
+
+              {/* Graphic Equalizer Panel */}
+              <div className="rounded-xl bg-slate-50 dark:bg-ink-950 border border-slate-200 dark:border-ink-800 p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
+                    {hi ? '6-बैंड ग्राफिक इक्वेलाइज़र (ऑडियोग्राम ट्यूनिंग)' : '6-Band Graphic Equalizer (Audiogram Tuning)'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setEqGainsState([...DEFAULT_EQ_GAINS])}
+                    className="text-[10px] font-bold text-navy-700 dark:text-navy-300 hover:underline"
+                  >
+                    {hi ? 'रीसेट करें' : 'Reset EQ'}
+                  </button>
+                </div>
+                <div className="grid grid-cols-6 gap-2 pt-1">
+                  {EQ_FREQUENCIES.map((freqHz, index) => (
+                    <div key={freqHz} className="flex flex-col items-center space-y-1.5">
+                      <span className="text-[10px] font-mono font-bold text-slate-600 dark:text-slate-300">
+                        {eqGains[index] > 0 ? `+${eqGains[index]}` : eqGains[index]} dB
+                      </span>
+                      <input
+                        type="range"
+                        min={-12}
+                        max={12}
+                        step={1}
+                        value={eqGains[index]}
+                        onChange={(e) => {
+                          const next = [...eqGains] as EqGains;
+                          next[index] = Number(e.target.value);
+                          setEqGainsState(next);
+                        }}
+                        className="w-full h-24 accent-navy-700 cursor-pointer text-center [writing-mode:vertical-lr] [direction:rtl]"
+                        aria-label={`${freqHz} Hz EQ`}
+                      />
+                      <span className="text-[10px] font-mono font-bold text-slate-400">
+                        {freqHz >= 1000 ? `${freqHz / 1000}k` : freqHz}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-[10px] text-slate-500 dark:text-slate-400 leading-relaxed pt-1">
+                  {hi
+                    ? 'अपनी ऑडियोग्राम रिपोर्ट के अनुसार आवृत्तियों को समायोजित करें (जैसे सुनने की कमी वाले क्षेत्र को बढ़ाएं)।'
+                    : 'Adjust bands to match your audiogram loss curve (e.g. boost frequencies where hearing threshold is elevated).'}
+                </p>
+              </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 pt-1">
                 <RangeRow

@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "Bash(npx --no-install playwright --version)",
-      "Read(//Users/sachinsrivastava/.claude/plugins/cache/claude-plugins-official/**)"
+      "Read(//Users/sachinsrivastava/.claude/plugins/cache/claude-plugins-official/**)",
+      "Bash(npx prisma *)",
+      "Bash(node -e ' *)",
+      "Bash(pkill -f \"next dev -p 3007\")"
     ]
   }
 }

@@ -55,6 +55,16 @@ interface LiveData {
   confidence?: number;
   isBlink?: boolean;
   is5PointCalibrated?: boolean;
+  /**
+   * Timestamp of the tracker sample this snapshot came from. Consumers running
+   * their own animation loop compare it against the last one they recorded, so
+   * a repeated read of the same sample is never logged twice under two
+   * different timestamps — which would read back as zero eye velocity and
+   * silently deflate the measured gain.
+   */
+  gazeT: number;
+  /** Head yaw (degrees) at the same instant. */
+  headYaw: number;
 }
 
 interface SessionData {
@@ -70,11 +80,43 @@ const EMPTY_LIVE: LiveData = {
   faceVisible: false, fps: 0,
   rawOffsetX: 0, rawOffsetY: 0,
   confidence: 0, isBlink: false, is5PointCalibrated: false,
+  gazeT: 0, headYaw: 0,
 };
 
 const EMPTY_SESSION: SessionData = {
   gazeHistory: [], headHistory: [], analytics: null, durationMs: 0,
 };
+
+/**
+ * How often React-rendered numeric readouts refresh from the tracker (ms).
+ * Canvas overlays still draw every frame; only the DOM readouts are capped,
+ * because re-rendering at display rate costs far more than it communicates.
+ */
+const HUD_SYNC_INTERVAL_MS = 80;
+
+type PursuitPattern = 'horizontal' | 'vertical' | 'circular' | 'vor-x2';
+
+/**
+ * Position of the pursuit target at a given moment, normalised to [0,1].
+ *
+ * Pure function of elapsed time so the render loop and the sample recorder can
+ * evaluate the same trajectory at different instants — the recorder needs the
+ * target where it was when the *eye* was sampled, not where it is now.
+ */
+function targetPositionAt(
+  elapsedSec: number,
+  pattern: PursuitPattern,
+  speedHz: number,
+): { x: number; y: number } {
+  const phase = elapsedSec * speedHz * Math.PI * 2;
+  switch (pattern) {
+    case 'horizontal': return { x: 0.5 + 0.35 * Math.sin(phase), y: 0.5 };
+    case 'vertical':   return { x: 0.5, y: 0.5 + 0.30 * Math.sin(phase) };
+    case 'circular':   return { x: 0.5 + 0.30 * Math.cos(phase), y: 0.5 + 0.25 * Math.sin(phase) };
+    // VOR x2: the target sweeps against the head turn, so it mirrors horizontal.
+    case 'vor-x2':     return { x: 0.5 - 0.35 * Math.sin(phase), y: 0.5 };
+  }
+}
 
 /* ============================================================ colour helpers */
 const VOR_COLOUR = (gain: number) =>
@@ -227,7 +269,7 @@ export const AIGazeAnalyticsEngine: React.FC = () => {
     const fixations = detectFixations(gaze);
     const saccades = detectSaccades(gaze);
     const vorScore = head.length > 4 ? scoreVOR(gaze, head) : null;
-    const nyst = detectNystagmusHeuristic(gaze);
+    const nyst = detectNystagmusHeuristic(gaze, head);
     const antiSaccadeErrorRate = computeAntiSaccadeErrorRate(saccades, head);
 
     const meanFixationDuration = fixations.length > 0
@@ -332,7 +374,7 @@ export const AIGazeAnalyticsEngine: React.FC = () => {
           const recentHead = headHistoryRef.current.filter(h => h.t > cutoff);
           if (recentGaze.length > 4 && recentHead.length > 4) {
             setLiveVOR(scoreVOR(recentGaze, recentHead));
-            setNystagmus(detectNystagmusHeuristic(recentGaze));
+            setNystagmus(detectNystagmusHeuristic(recentGaze, recentHead));
           }
         }
 
@@ -349,6 +391,8 @@ export const AIGazeAnalyticsEngine: React.FC = () => {
           confidence: gp.confidence ?? 0.9,
           isBlink: gp.isBlink ?? false,
           is5PointCalibrated: Boolean(calibration5PtRef.current?.isCalibrated),
+          gazeT: gp.t,
+          headYaw: face.pose.yaw,
         });
       } else {
         drawSearching(ctx, w, h);
@@ -441,7 +485,6 @@ export const AIGazeAnalyticsEngine: React.FC = () => {
             liveData={liveData}
             liveVOR={liveVOR}
             nystagmus={nystagmus}
-            videoRef={videoRef}
             canvasRef={canvasRef}
             onStartCamera={startCamera}
             onStopCamera={stopCamera}
@@ -456,7 +499,6 @@ export const AIGazeAnalyticsEngine: React.FC = () => {
             hi={hi}
             cameraState={cameraState}
             liveData={liveData}
-            videoRef={videoRef}
             canvasRef={canvasRef}
             onStartCamera={startCamera}
             onStopCamera={stopCamera}
@@ -470,6 +512,15 @@ export const AIGazeAnalyticsEngine: React.FC = () => {
           <LongitudinalTab hi={hi} sessions={historySessions} adherence={adherence} />
         )}
       </div>
+
+      {/*
+        The camera stream lives on this single video element, mounted once for
+        the whole engine. Each tab draws its own preview canvas, but the video
+        itself must never unmount: React would tear down the element holding the
+        MediaStream and mount a fresh, source-less one in the next tab, leaving
+        the app in the "live" state showing a black preview.
+      */}
+      <video ref={videoRef} className="hidden" playsInline muted aria-hidden="true" />
 
       {/* 5-Point Calibration Wizard Modal */}
       {isWizardOpen && (
@@ -512,7 +563,6 @@ const LiveStudioTab: React.FC<{
   liveData: LiveData;
   liveVOR: VORScore | null;
   nystagmus: NystagmusFlag;
-  videoRef: React.RefObject<HTMLVideoElement | null>;
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
   onStartCamera: () => void;
   onStopCamera: () => void;
@@ -523,7 +573,7 @@ const LiveStudioTab: React.FC<{
 }> = ({
   hi, cameraState, cameraError, modelReady, modelFailed,
   isRecording, liveData, liveVOR, nystagmus,
-  videoRef, canvasRef,
+  canvasRef,
   onStartCamera, onStopCamera, onStartRecording, onStopRecording, onCalibrateGaze, onOpen5PointWizard,
 }) => {
   const vorGain = liveVOR?.gain ?? 0;
@@ -590,7 +640,6 @@ const LiveStudioTab: React.FC<{
 
         {/* Camera canvas */}
         <div className="relative bg-black rounded-2xl overflow-hidden border border-white/10 aspect-video flex items-center justify-center">
-          <video ref={videoRef as React.RefObject<HTMLVideoElement>} className="hidden" playsInline muted aria-hidden="true" />
           <canvas
             ref={canvasRef as React.RefObject<HTMLCanvasElement>}
             className={`w-full h-full object-cover ${cameraState === 'live' ? '' : 'hidden'}`}
@@ -1286,17 +1335,16 @@ const RedDotPursuitTab: React.FC<{
   hi: boolean;
   cameraState: CameraState;
   liveData: LiveData;
-  videoRef: React.RefObject<HTMLVideoElement | null>;
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
-  onStartCamera: () => void;
+  onStartCamera: () => void | Promise<void>;
   onStopCamera: () => void;
   onCalibrateGaze?: () => void;
 }> = ({
-  hi, cameraState, liveData, videoRef, canvasRef, onStartCamera, onStopCamera, onCalibrateGaze,
+  hi, cameraState, liveData, canvasRef, onStartCamera, onStopCamera, onCalibrateGaze,
 }) => {
   const targetCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  const [pattern, setPattern] = useState<'horizontal' | 'vertical' | 'circular' | 'vor-x2'>('horizontal');
+  const [pattern, setPattern] = useState<PursuitPattern>('horizontal');
   const [speedHz, setSpeedHz] = useState<number>(0.4);
   const [isTesting, setIsTesting] = useState(false);
 
@@ -1307,6 +1355,8 @@ const RedDotPursuitTab: React.FC<{
   // Live real-time error & score
   const [liveErrorPct, setLiveErrorPct] = useState<number>(0);
   const [resultScore, setResultScore] = useState<PursuitScore | null>(null);
+  /** Reflex gain, populated only for the VOR x2 pattern. */
+  const [vorResult, setVorResult] = useState<VORScore | null>(null);
 
   const targetHistoryRef = useRef<PursuitTargetPoint[]>([]);
   const gazeHistoryRef = useRef<GazePoint[]>([]);
@@ -1316,6 +1366,9 @@ const RedDotPursuitTab: React.FC<{
   const liveDataRef = useRef(liveData);
   const isTestingRef = useRef(isTesting);
   const startTimeRef = useRef<number>(performance.now());
+  /** Head yaw during the test, so VOR x2 can be scored as a reflex, not a pursuit. */
+  const headHistoryRef = useRef<Array<{ t: number; yaw: number }>>([]);
+  const lastErrorSyncRef = useRef<number>(0);
 
   useEffect(() => { liveDataRef.current = liveData; }, [liveData]);
   useEffect(() => { isTestingRef.current = isTesting; }, [isTesting]);
@@ -1329,10 +1382,18 @@ const RedDotPursuitTab: React.FC<{
 
     startTimeRef.current = performance.now();
 
+    // Timestamp of the last tracker sample committed to the history buffers.
+    let lastRecordedGazeT = -1;
+
     const render = () => {
       animFrameRef.current = requestAnimationFrame(render);
-      const w = canvas.width = canvas.parentElement?.clientWidth || 640;
-      const h = canvas.height = canvas.parentElement?.clientHeight || 360;
+
+      // Assigning canvas.width/height reallocates the backing store and clears
+      // the surface, so only do it when the element has actually been resized.
+      const w = canvas.parentElement?.clientWidth || 640;
+      const h = canvas.parentElement?.clientHeight || 360;
+      if (canvas.width !== w) canvas.width = w;
+      if (canvas.height !== h) canvas.height = h;
 
       const now = performance.now();
       const elapsed = (now - startTimeRef.current) / 1000; // seconds
@@ -1346,24 +1407,8 @@ const RedDotPursuitTab: React.FC<{
       for (let x = 0; x < w; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
       for (let y = 0; y < h; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
 
-      // Compute moving red dot target position (normalised 0-1)
-      let tx = 0.5;
-      let ty = 0.5;
-
-      const freq = speedHz * Math.PI * 2;
-      if (pattern === 'horizontal') {
-        tx = 0.5 + 0.35 * Math.sin(elapsed * freq);
-        ty = 0.5;
-      } else if (pattern === 'vertical') {
-        tx = 0.5;
-        ty = 0.5 + 0.30 * Math.sin(elapsed * freq);
-      } else if (pattern === 'circular') {
-        tx = 0.5 + 0.30 * Math.cos(elapsed * freq);
-        ty = 0.5 + 0.25 * Math.sin(elapsed * freq);
-      } else if (pattern === 'vor-x2') {
-        tx = 0.5 - 0.35 * Math.sin(elapsed * freq);
-        ty = 0.5;
-      }
+      // Moving red dot target position (normalised 0-1)
+      const { x: tx, y: ty } = targetPositionAt(elapsed, pattern, speedHz);
 
       const dotX = tx * w;
       const dotY = ty * h;
@@ -1420,20 +1465,36 @@ const RedDotPursuitTab: React.FC<{
         ctx.stroke();
         ctx.setLineDash([]);
 
-        // Record target point & compute real-time error (throttled to ~30 Hz)
-        const lastGaze = gazeHistoryRef.current[gazeHistoryRef.current.length - 1];
-        if (!lastGaze || now - lastGaze.t >= 25) {
-          const tPoint: PursuitTargetPoint = { x: tx, y: ty, t: now, mode: pattern };
-          const gPoint: GazePoint = { x: curLiveData.gazeX, y: curLiveData.gazeY, t: now, hasIris: curLiveData.hasIris };
+        // Record one sample per *tracker* frame, not per render frame. This
+        // loop runs at display rate; the camera often runs slower, so keying
+        // off wall-clock would log the same eye position several times under
+        // advancing timestamps and read back as zero eye velocity — deflating
+        // the measured pursuit gain.
+        if (curLiveData.gazeT !== lastRecordedGazeT) {
+          lastRecordedGazeT = curLiveData.gazeT;
+          // Pair the target with the instant the eye was actually sampled, so
+          // gaze and target are compared at the same moment in time.
+          const sampleElapsed = (curLiveData.gazeT - startTimeRef.current) / 1000;
+          const paired = targetPositionAt(sampleElapsed, pattern, speedHz);
 
-          targetHistoryRef.current.push(tPoint);
-          gazeHistoryRef.current.push(gPoint);
+          targetHistoryRef.current.push({
+            x: paired.x, y: paired.y, t: curLiveData.gazeT, mode: pattern,
+          });
+          gazeHistoryRef.current.push({
+            x: curLiveData.gazeX, y: curLiveData.gazeY,
+            t: curLiveData.gazeT, hasIris: curLiveData.hasIris,
+          });
+          headHistoryRef.current.push({ t: curLiveData.gazeT, yaw: curLiveData.headYaw });
         }
 
-        const dx = curLiveData.gazeX - tx;
-        const dy = curLiveData.gazeY - ty;
-        const errPct = Math.sqrt(dx * dx + dy * dy) * 100;
-        setLiveErrorPct(parseFloat(errPct.toFixed(1)));
+        // The readout only has to stay legible; driving it at render rate
+        // re-rendered this whole tab 60 times a second.
+        if (now - lastErrorSyncRef.current >= HUD_SYNC_INTERVAL_MS) {
+          lastErrorSyncRef.current = now;
+          const dx = curLiveData.gazeX - tx;
+          const dy = curLiveData.gazeY - ty;
+          setLiveErrorPct(parseFloat((Math.sqrt(dx * dx + dy * dy) * 100).toFixed(1)));
+        }
       }
     };
 
@@ -1444,22 +1505,35 @@ const RedDotPursuitTab: React.FC<{
   }, [pattern, speedHz]);
 
 
-  const startTest = () => {
+  const startTest = async () => {
+    // Bring the camera up before arming the test, otherwise the opening seconds
+    // record nothing while the stream and model are still starting.
+    if (cameraState !== 'live') await onStartCamera();
+
     targetHistoryRef.current = [];
     gazeHistoryRef.current = [];
+    headHistoryRef.current = [];
     testStartRef.current = performance.now();
+    startTimeRef.current = performance.now();
     setResultScore(null);
     setIsTesting(true);
-    if (cameraState !== 'live') onStartCamera();
   };
 
   const stopTest = () => {
     setIsTesting(false);
     const targets = targetHistoryRef.current;
     const gazes = gazeHistoryRef.current;
+    const heads = headHistoryRef.current;
     const saccades = detectSaccades(gazes);
-    const score = scoreSmoothPursuit(targets, gazes, saccades, hi ? 'hi' : 'en');
-    setResultScore(score);
+    setResultScore(scoreSmoothPursuit(targets, gazes, saccades, hi ? 'hi' : 'en'));
+
+    // VOR x2 asks the patient to turn the head against the target, so the
+    // clinically meaningful number is reflex gain, not pursuit gain.
+    setVorResult(
+      pattern === 'vor-x2' && heads.length > 4 && gazes.length > 4
+        ? scoreVOR(gazes, heads)
+        : null,
+    );
   };
 
   const symptomEscalation = symptomAfter - symptomBefore;
@@ -1634,7 +1708,6 @@ const RedDotPursuitTab: React.FC<{
             </div>
 
             <div className="relative bg-black rounded-xl overflow-hidden aspect-video border border-white/10 flex items-center justify-center">
-              <video ref={videoRef as React.RefObject<HTMLVideoElement>} className="hidden" playsInline muted aria-hidden="true" />
               <canvas ref={canvasRef as React.RefObject<HTMLCanvasElement>} className={`w-full h-full object-cover ${cameraState === 'live' ? '' : 'hidden'}`} />
               {cameraState !== 'live' && (
                 <p className="text-xs text-slate-500 text-center p-4">{hi ? 'कैमरा चालू करें' : 'Camera turned off'}</p>
@@ -1695,6 +1768,30 @@ const RedDotPursuitTab: React.FC<{
                 <MiniMetric label={hi ? 'गुणवत्ता' : 'Quality'} value={resultScore.quality.toUpperCase()} />
               </div>
               <p className="text-xs text-slate-200 bg-white/5 p-2.5 rounded-xl border border-white/5">{resultScore.guidance}</p>
+
+              {/* VOR x2 turns the head against the target, so reflex gain is
+                  the clinically meaningful number rather than pursuit gain. */}
+              {vorResult && (
+                <div className="pt-3 border-t border-white/10 space-y-2">
+                  <h4 className="text-xs font-bold text-cyan-300 uppercase tracking-widest">
+                    {hi ? 'VOR x2 रिफ्लेक्स गेन' : 'VOR x2 Reflex Gain'}
+                  </h4>
+                  {vorResult.isHeadStationary ? (
+                    <p className="text-xs text-amber-200 bg-amber-950/40 border border-amber-500/30 p-2.5 rounded-xl">
+                      {hi
+                        ? 'सिर पर्याप्त नहीं घुमाया गया — VOR गेन मापने के लिए बिंदु के विपरीत सिर घुमाएँ।'
+                        : 'Head barely moved — turn your head against the dot so reflex gain can be measured.'}
+                    </p>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-2 text-center">
+                      <MiniMetric label={hi ? 'VOR गेन' : 'VOR Gain'} value={vorResult.gain.toFixed(2)} />
+                      <MiniMetric label={hi ? 'स्तर' : 'Level'} value={vorResult.label.toUpperCase()} />
+                      <MiniMetric label={hi ? 'सिर गति' : 'Head vel.'} value={`${vorResult.meanHeadVelocityDeg.toFixed(0)}°/s`} />
+                      <MiniMetric label={hi ? 'चक्र' : 'Cycles'} value={String(vorResult.cycles)} />
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>

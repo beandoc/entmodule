@@ -12,11 +12,13 @@ import {
   Smartphone,
   Sun,
   UserRound,
+  Ear,
+  Stethoscope,
 } from 'lucide-react';
 import { useAppData } from '@/lib/app-data-context';
 import { DhanwantariMark } from './DhanwantariMark';
 
-export type AccessRole = 'patient' | 'caregiver';
+export type AccessRole = 'patient' | 'audiologist' | 'ent_specialist' | 'caregiver';
 
 export const AccessWelcome: React.FC<{ onEnter: (role: AccessRole) => void }> = ({ onEnter }) => {
   const { locale, setLocale, theme, setTheme } = useAppData();
@@ -27,20 +29,49 @@ export const AccessWelcome: React.FC<{ onEnter: (role: AccessRole) => void }> = 
     {
       id: 'patient' as const,
       icon: UserRound,
-      title: hi ? 'मैं रोगी हूँ' : 'I am the patient',
+      title: hi ? 'रोगी पोर्टल (सचिन श्रीवास्तव)' : 'Patient Portal (Sachin Srivastava)',
       body: hi
-        ? 'अपना रिकवरी प्लान, लक्षण लॉग, गाइड और आपातकालीन कार्ड देखें।'
-        : 'Open your recovery plan, symptom log, care guides, and emergency card.',
+        ? 'अपना रिकवरी प्लान, लक्षण लॉग, स्वास्थ्य शिक्षा और आपातकालीन कार्ड देखें।'
+        : 'Open your personal recovery plan, symptom log, care guides, and emergency card.',
+    },
+    {
+      id: 'audiologist' as const,
+      icon: Ear,
+      title: hi ? 'ऑडियोलॉजिस्ट पोर्टल (श्री लोकनाथ साहू)' : 'Audiologist Portal (Mr Lokanath Sahoo)',
+      body: hi
+        ? 'श्री लोकनाथ साहू (मुख्य नैदानिक ऑडियोलॉजिस्ट) - शुद्ध टोन ऑडियोमेट्री (PTA), टिनिटस मास्किंग Rx, स्पीच-इन-नॉइज़ व हियरिंग एड फिटिंग suite।'
+        : 'Mr Lokanath Sahoo (Chief Clinical Audiologist) - Full Audiology Suite: Pure Tone Audiometry (PTA), Speech-in-Noise, REM fitting & Tinnitus Rx.',
+    },
+    {
+      id: 'ent_specialist' as const,
+      icon: Stethoscope,
+      title: hi ? 'ईएनटी विशेषज्ञ पोर्टल (ENT Specialist Portal)' : 'ENT Specialist Portal',
+      body: hi
+        ? 'ओपीडी एवं शल्य चिकित्सा रोस्टर, HIS परामर्श, निर्णय सहायता और क्लिनिकल एनालिटिक्स।'
+        : 'Access surgical & OPD rosters, HIS patient consults, decision aids, and clinical analytics.',
     },
     {
       id: 'caregiver' as const,
       icon: HeartHandshake,
-      title: hi ? 'मैं देखभालकर्ता हूँ' : 'I am a caregiver',
+      title: hi ? 'देखभालकर्ता पोर्टल (Caregiver Portal)' : 'Caregiver Portal',
       body: hi
         ? 'अनुमति के साथ देखभाल निर्देश, चेतावनी संकेत और दैनिक सहायता कार्य देखें।'
         : 'View care instructions, warning signs, and daily support tasks with consent.',
     },
   ];
+
+  const getButtonText = () => {
+    switch (role) {
+      case 'audiologist':
+        return hi ? 'ऑडियोलॉजिस्ट पोर्टल में प्रवेश करें' : 'Enter Audiologist Portal';
+      case 'ent_specialist':
+        return hi ? 'ईएनटी विशेषज्ञ पोर्टल में प्रवेश करें' : 'Enter ENT Specialist Portal';
+      case 'caregiver':
+        return hi ? 'देखभालकर्ता पोर्टल खोलें' : 'Enter Caregiver View';
+      default:
+        return hi ? 'रोगी डैशबोर्ड में प्रवेश करें (सचिन)' : 'Enter Patient Dashboard (Sachin)';
+    }
+  };
 
   return (
     <div className={`min-h-screen bg-[var(--bg-primary)] text-slate-950 dark:text-white ${locale === 'hi' ? 'lang-hi' : ''}`}>
@@ -53,7 +84,7 @@ export const AccessWelcome: React.FC<{ onEnter: (role: AccessRole) => void }> = 
             <div>
               <p className="font-display text-base font-bold leading-tight">i-Dhanwantari</p>
               <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-blue-700 dark:text-blue-300">
-                ENT Patient Care
+                ENT Clinical Portal
               </p>
             </div>
           </div>
@@ -78,21 +109,21 @@ export const AccessWelcome: React.FC<{ onEnter: (role: AccessRole) => void }> = 
         </div>
       </header>
 
-      <main className="mx-auto grid min-h-screen max-w-6xl grid-cols-1 items-center gap-8 px-4 pb-8 pt-24 sm:px-8 lg:grid-cols-[1.05fr_0.95fr] lg:pt-16">
+      <main className="mx-auto grid min-h-screen max-w-6xl grid-cols-1 items-center gap-8 px-4 pb-8 pt-24 sm:px-8 lg:grid-cols-[1fr_1fr] lg:pt-16">
         <section className="space-y-6">
           <div className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-[11px] font-bold text-blue-800 dark:border-blue-900/70 dark:bg-blue-950/35 dark:text-blue-200">
             <ShieldCheck className="h-3.5 w-3.5" />
-            {hi ? 'ABDM-संगत सुरक्षित देखभाल प्रवेश' : 'Secure ABDM-aligned care access'}
+            {hi ? 'ABDM-संगत सुरक्षित पोर्टल प्रवेश' : 'Secure ABDM-aligned clinical portal access'}
           </div>
 
           <div className="max-w-2xl space-y-4">
             <h1 className="font-display text-3xl font-bold leading-tight tracking-tight sm:text-5xl">
-              {hi ? 'आपकी ENT रिकवरी, सुरक्षित और सरल।' : 'Your ENT recovery, safely in one place.'}
+              {hi ? 'ENT क्लिनिकल एवं रोगी सेवा पोर्टल' : 'ENT Clinical & Patient Care Portal'}
             </h1>
             <p className="max-w-xl text-sm leading-6 text-slate-600 dark:text-slate-300 sm:text-base">
               {hi
-                ? 'रोगी या देखभालकर्ता के रूप में जारी रखें। आपका केयर प्लान, दैनिक लक्षण, गाइड और आपातकालीन जानकारी भूमिका के अनुसार व्यवस्थित होगी।'
-                : 'Continue as a patient or caregiver. Your care plan, daily symptoms, guides, and emergency information will open in a role-aware workspace.'}
+                ? 'ईएनटी विशेषज्ञ, ऑडियोलॉजिस्ट, या रोगी (सचिन श्रीवास्तव) के रूप में प्रवेश करें।'
+                : 'Select your role to open ENT Specialist Portal, Audiologist Portal, or Patient Dashboard.'}
             </p>
           </div>
 
@@ -115,14 +146,14 @@ export const AccessWelcome: React.FC<{ onEnter: (role: AccessRole) => void }> = 
 
         <section className="clinical-card p-4 sm:p-6">
           <div className="mb-5">
-            <p className="clinical-kicker">{hi ? 'भूमिका चुनें' : 'Choose access role'}</p>
+            <p className="clinical-kicker">{hi ? 'पोर्टल चुनें' : 'Select Portal'}</p>
             <h2 className="mt-1 font-display text-xl font-bold text-slate-950 dark:text-white">
-              {hi ? 'स्वागत है, सचिन' : 'Welcome, Sachin'}
+              {hi ? 'स्वागत है, सचिन श्रीवास्तव' : 'Welcome, Sachin Srivastava'}
             </h2>
             <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">
               {hi
-                ? 'यह डेमो प्रवेश है। वास्तविक उपयोग में ABHA/OTP या अस्पताल MRN सत्यापन जोड़ा जाएगा।'
-                : 'This is a demo access step. In production, connect this to ABHA/OTP or hospital MRN verification.'}
+                ? 'पोर्टल चुनें जिससे आप सिस्टम का उपयोग करना चाहते हैं।'
+                : 'Choose the portal workspace you want to launch.'}
             </p>
           </div>
 
@@ -177,13 +208,7 @@ export const AccessWelcome: React.FC<{ onEnter: (role: AccessRole) => void }> = 
           </div>
 
           <button onClick={() => onEnter(role)} className="btn-primary mt-5 w-full px-5 text-sm">
-            {role === 'patient'
-              ? hi
-                ? 'रोगी डैशबोर्ड खोलें'
-                : 'Enter Patient Dashboard'
-              : hi
-              ? 'देखभालकर्ता दृश्य खोलें'
-              : 'Enter Caregiver View'}
+            {getButtonText()}
             <ArrowRight className="h-4 w-4" />
           </button>
 

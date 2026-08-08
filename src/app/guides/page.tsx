@@ -1,5 +1,6 @@
 'use client';
 
+import { DhingraPatientEducationHub } from '@/components/DhingraPatientEducationHub';
 import { SkillsLibrary } from '@/components/SkillsLibrary';
 import { EustachianTubeGuide } from '@/components/EustachianTubeGuide';
 import { TinnitusGuide } from '@/components/TinnitusGuide';
@@ -13,6 +14,10 @@ export default function GuidesPage() {
   const { catalogueData } = useAppData();
   return (
     <div className="space-y-10 pb-12">
+      <ClinicalErrorBoundary componentName="DhingraPatientEducationHub">
+        <DhingraPatientEducationHub />
+      </ClinicalErrorBoundary>
+
       <ClinicalErrorBoundary componentName="HearingLossGuide">
         <HearingLossGuide />
       </ClinicalErrorBoundary>

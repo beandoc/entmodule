@@ -1,8 +1,11 @@
 // i-Dhanwantari ENT Portal Service Worker — Offline-First & Low-Bandwidth Mode
-const CACHE_NAME = 'idhanwantari-v2';
+const CACHE_NAME = 'idhanwantari-v3';
 const STATIC_ASSETS = [
   '/',
   '/care-plan',
+  '/patient-education',
+  '/audiologist',
+  '/settings',
   '/symptom-log',
   '/self-assessment',
   '/rehab/vestibular',

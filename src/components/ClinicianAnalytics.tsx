@@ -237,6 +237,63 @@ export const ClinicianAnalytics: React.FC = () => {
           ))}
         </div>
       </div>
+
+      {/* Real-time Audiologist & Patient Sync Panel */}
+      <ClinicianAudiologySyncSection hi={hi} />
+    </div>
+  );
+};
+
+const ClinicianAudiologySyncSection: React.FC<{ hi: boolean }> = ({ hi }) => {
+  const { latestAudiologyEval } = useAppData();
+
+  if (!latestAudiologyEval) return null;
+
+  return (
+    <div className="bg-slate-900 text-white border border-slate-800 rounded-3xl p-6 shadow-xl space-y-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-bold uppercase tracking-wider bg-teal-500/20 text-teal-300 px-2.5 py-0.5 rounded-full border border-teal-500/30 flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-teal-400 animate-pulse" />
+              {hi ? 'ऑडियोलॉजिस्ट लाइव डेटा सिंक' : 'Live Audiologist Data Sync'}
+            </span>
+            <span className="text-xs font-mono text-slate-400">
+              Evaluator: {latestAudiologyEval.audiologistName || 'Mr Lokanath Sahoo'}
+            </span>
+          </div>
+          <h3 className="font-bold text-lg text-white mt-1">
+            Patient Evaluation: {latestAudiologyEval.patientName || 'Sachin Srivastava'} ({latestAudiologyEval.patientMrn || 'MRN: 88491'})
+          </h3>
+        </div>
+
+        <span className="text-xs font-mono text-teal-400 bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-800">
+          Last Synced: {new Date(latestAudiologyEval.updatedAt || Date.now()).toLocaleTimeString()}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs">
+        <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800">
+          <span className="text-slate-500 block text-[10px] uppercase font-bold">Right Ear PTA</span>
+          <span className="text-base font-extrabold text-rose-400 font-mono">{latestAudiologyEval.rightPta} dB HL</span>
+        </div>
+        <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800">
+          <span className="text-slate-500 block text-[10px] uppercase font-bold">Left Ear PTA</span>
+          <span className="text-base font-extrabold text-cyan-400 font-mono">{latestAudiologyEval.leftPta} dB HL</span>
+        </div>
+        <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800">
+          <span className="text-slate-500 block text-[10px] uppercase font-bold">Speech-in-Noise</span>
+          <span className="text-base font-extrabold text-emerald-400 font-mono">{latestAudiologyEval.speechInNoiseScore}%</span>
+        </div>
+        <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800">
+          <span className="text-slate-500 block text-[10px] uppercase font-bold">Tympanogram</span>
+          <span className="text-base font-extrabold text-amber-400 font-mono">{latestAudiologyEval.tympanogramType}</span>
+        </div>
+        <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800">
+          <span className="text-slate-500 block text-[10px] uppercase font-bold">Fitting Status</span>
+          <span className="text-base font-extrabold text-purple-400 font-mono">{latestAudiologyEval.fittingStatus}</span>
+        </div>
+      </div>
     </div>
   );
 };

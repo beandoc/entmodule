@@ -142,6 +142,15 @@ export const navGroups: NavGroup[] = [
     titleHi: 'सीखें',
     items: [
       {
+        href: '/patient-education',
+        label: 'Patient Education',
+        labelHi: 'मरीज शिक्षा मॉड्यूल',
+        description: 'Bilingual evidence-backed ENT patient education modules',
+        descriptionHi: 'द्विभाषी नाक-कान-गला स्वास्थ्य शिक्षा मॉड्यूल',
+        icon: BookOpenText,
+        keywords: 'patient education otology rhinology laryngology symptoms red flags',
+      },
+      {
         href: '/guides',
         label: 'Recovery Guides',
         labelHi: 'रिकवरी गाइड',
@@ -256,6 +265,15 @@ export const clinicianGroup: NavGroup = {
       descriptionHi: 'शुद्ध स्वर श्रवणलेख और टिनिटस साउंड थेरेपी',
       icon: Ear,
       keywords: 'audiogram pta pure tone audiometry tinnitus hearing aid fitting speech in noise audiologist',
+    },
+    {
+      href: '/settings',
+      label: 'User Management',
+      labelHi: 'उपयोगकर्ता प्रबंधन',
+      description: 'Register doctors, audiologists & new patients',
+      descriptionHi: 'डॉक्टरों, ऑडियोलॉजिस्ट और नए रोगियों का पंजीकरण',
+      icon: Users,
+      keywords: 'settings user registration new patient doctor audiologist abdm hpr mrn',
     },
   ],
 };

@@ -36,6 +36,10 @@ interface AppDataContextValue {
   handleSignReceipt: () => void;
   sigSigned: boolean;
 
+  // Real-Time Audiology Evaluation Data Sync across Portals
+  latestAudiologyEval: any;
+  fetchAudiologyEval: () => Promise<void>;
+
   // Catalogue
   catalogueData: CatalogueData;
 
@@ -43,6 +47,11 @@ interface AppDataContextValue {
   surgeryTime: string;
   setSurgeryTime: (t: string) => void;
   npoTimes: { solidTime: string; liquidTime: string };
+
+  // User Registration & Management System
+  registeredUsers: any[];
+  fetchUsers: () => Promise<void>;
+  handleRegisterUser: (userData: any) => Promise<{ success: boolean; error?: string }>;
 
   // Author studio
   topics: any[];
@@ -72,6 +81,7 @@ export const AppDataProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [orderDetails, setOrderDetails] = useState<any>(null);
   const [loadingOrder, setLoadingOrder] = useState(false);
   const [orderError, setOrderError] = useState<string | null>(null);
+  const [latestAudiologyEval, setLatestAudiologyEval] = useState<any>(null);
 
   const [catalogueData, setCatalogueData] = useState<CatalogueData>({
     harmAlerts: [],
@@ -121,10 +131,22 @@ export const AppDataProvider: React.FC<{ children: React.ReactNode }> = ({ child
     window.localStorage.setItem('id-locale', v);
   };
 
+  const [registeredUsers, setRegisteredUsers] = useState<any[]>([]);
+
   useEffect(() => {
     fetchOrders();
     fetchTopics();
     fetchCatalogue();
+    fetchAudiologyEval();
+    fetchUsers();
+
+    // Real-time polling fallback sync interval (every 4 seconds)
+    const timer = setInterval(() => {
+      fetchAudiologyEval();
+      fetchUsers();
+    }, 4000);
+
+    return () => clearInterval(timer);
   }, []);
 
   useEffect(() => {
@@ -132,6 +154,49 @@ export const AppDataProvider: React.FC<{ children: React.ReactNode }> = ({ child
       loadOrderDetails(selectedOrderId);
     }
   }, [selectedOrderId]);
+
+  const fetchUsers = async () => {
+    try {
+      const res = await fetch('/api/users');
+      const data = await res.json();
+      if (data.success && data.users) {
+        setRegisteredUsers(data.users);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleRegisterUser = async (userData: any) => {
+    try {
+      const res = await fetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(userData),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setRegisteredUsers(data.users || []);
+        return { success: true };
+      } else {
+        return { success: false, error: data.error };
+      }
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  };
+
+  const fetchAudiologyEval = async () => {
+    try {
+      const res = await fetch('/api/audiology');
+      const data = await res.json();
+      if (data.success && data.evaluation) {
+        setLatestAudiologyEval(data.evaluation);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   const fetchOrders = async () => {
     try {
@@ -290,10 +355,15 @@ export const AppDataProvider: React.FC<{ children: React.ReactNode }> = ({ child
     handleReleaseEmbargo,
     handleSignReceipt,
     sigSigned,
+    latestAudiologyEval,
+    fetchAudiologyEval,
     catalogueData,
     surgeryTime,
     setSurgeryTime,
     npoTimes: calculateNPO(),
+    registeredUsers,
+    fetchUsers,
+    handleRegisterUser,
     topics,
     newTopic,
     setNewTopic,

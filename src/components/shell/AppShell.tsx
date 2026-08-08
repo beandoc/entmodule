@@ -86,10 +86,13 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
     setCaching(true);
     try {
       if ('caches' in window) {
-        const cache = await caches.open('idhanwantari-v2');
+        const cache = await caches.open('idhanwantari-v3');
         await cache.addAll([
           '/',
           '/care-plan',
+          '/patient-education',
+          '/audiologist',
+          '/settings',
           '/symptom-log',
           '/self-assessment',
           '/rehab/vestibular',
@@ -117,6 +120,12 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
     try {
       localStorage.setItem('id-access-role', role);
     } catch {}
+
+    if (role === 'audiologist') {
+      window.location.href = '/audiologist';
+    } else if (role === 'ent_specialist') {
+      window.location.href = '/schemes';
+    }
   };
 
   const handleSwitchRole = () => {

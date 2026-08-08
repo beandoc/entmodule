@@ -2,11 +2,12 @@
 
 import React, { useState } from 'react';
 import { 
-  ShieldAlert, Play, Clock, HelpCircle, Send, Check, Video, RefreshCw, Lock
+  ShieldAlert, Play, Clock, HelpCircle, Send, Check, Video, RefreshCw, Lock, Ear, Activity
 } from 'lucide-react';
 import { ClinicalTextHardener } from '@/lib/clinical-text';
 import { AbhaConsentPanel } from './AbhaConsentPanel';
 import { NotificationDispatcher } from './NotificationDispatcher';
+import { useAppData } from '@/lib/app-data-context';
 
 interface PatientPortalProps {
   locale: 'en' | 'hi';
@@ -109,6 +110,9 @@ export const PatientPortal: React.FC<PatientPortalProps> = ({
           Call ENT Casualty (24x7)
         </button>
       </div>
+
+      {/* Real-time Synced Audiology Evaluation Card (from Mr Lokanath Sahoo) */}
+      <PatientAudiologySyncCard locale={locale} />
 
       {/* Preventable Harm Day-Indexed Alerts */}
       {catalogueData.harmAlerts.length > 0 && (
@@ -322,6 +326,72 @@ export const PatientPortal: React.FC<PatientPortalProps> = ({
 
       {/* ABHA ID Digital Health Consent & HIS PROM Doctor Sharing */}
       <AbhaConsentPanel />
+    </div>
+  );
+};
+
+const PatientAudiologySyncCard: React.FC<{ locale: 'en' | 'hi' }> = ({ locale }) => {
+  const { latestAudiologyEval } = useAppData();
+  const hi = locale === 'hi';
+
+  if (!latestAudiologyEval) return null;
+
+  return (
+    <div className="bg-gradient-to-r from-indigo-900 via-slate-900 to-blue-950 text-white rounded-2xl p-5 shadow-lg border border-indigo-500/30 space-y-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-indigo-800/60 pb-3">
+        <div className="flex items-center gap-3">
+          <div className="p-2.5 rounded-xl bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+            <Ear className="w-6 h-6" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30 flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                {hi ? 'रीयल-टाइम सिंक (Audiologist Sync)' : 'Real-Time Audiologist Sync'}
+              </span>
+              <span className="text-xs text-indigo-200 font-mono">
+                {latestAudiologyEval.audiologistName || 'Mr Lokanath Sahoo'}
+              </span>
+            </div>
+            <h3 className="font-bold text-base text-white mt-1">
+              {hi ? 'श्रवण एवं टिनिटस मूल्यांकन रिपोर्ट' : 'Audiological Evaluation & Tinnitus Rx'}
+            </h3>
+          </div>
+        </div>
+
+        <span className="text-xs text-slate-300 font-mono bg-white/10 px-2.5 py-1 rounded-lg">
+          Updated: {new Date(latestAudiologyEval.updatedAt || Date.now()).toLocaleTimeString()}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+        <div className="p-3 rounded-xl bg-slate-950/70 border border-indigo-900/50">
+          <span className="text-slate-400 block text-[10px] uppercase font-bold">Right Ear PTA</span>
+          <span className="text-base font-extrabold text-rose-300 font-mono">{latestAudiologyEval.rightPta} dB HL</span>
+        </div>
+        <div className="p-3 rounded-xl bg-slate-950/70 border border-indigo-900/50">
+          <span className="text-slate-400 block text-[10px] uppercase font-bold">Left Ear PTA</span>
+          <span className="text-base font-extrabold text-cyan-300 font-mono">{latestAudiologyEval.leftPta} dB HL</span>
+        </div>
+        <div className="p-3 rounded-xl bg-slate-950/70 border border-indigo-900/50">
+          <span className="text-slate-400 block text-[10px] uppercase font-bold">Speech-in-Noise</span>
+          <span className="text-base font-extrabold text-emerald-300 font-mono">{latestAudiologyEval.speechInNoiseScore}%</span>
+        </div>
+        <div className="p-3 rounded-xl bg-slate-950/70 border border-indigo-900/50">
+          <span className="text-slate-400 block text-[10px] uppercase font-bold">Tympanometry</span>
+          <span className="text-base font-extrabold text-amber-300 font-mono">{latestAudiologyEval.tympanogramType}</span>
+        </div>
+      </div>
+
+      <div className="p-3 rounded-xl bg-indigo-950/60 border border-indigo-800/40 text-xs text-indigo-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div>
+          <span className="font-bold text-white">Prescribed Sound Therapy:</span>{' '}
+          {latestAudiologyEval.maskingNoiseType} ({latestAudiologyEval.tinnitusPitchHz} Hz Match)
+        </div>
+        <span className="text-[11px] font-mono text-emerald-300 font-bold bg-emerald-950/80 px-2 py-1 rounded border border-emerald-700/50">
+          Fitting: {latestAudiologyEval.fittingStatus}
+        </span>
+      </div>
     </div>
   );
 };

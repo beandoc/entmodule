@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 
+export function generateStaticParams() {
+  return [{ id: 'demo' }];
+}
+
 export async function POST(request: Request, { params }: { params: { id: string } }) {
   try {
     const body = await request.json();

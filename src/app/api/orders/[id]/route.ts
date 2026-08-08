@@ -2,6 +2,10 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { PublishGateEngine } from '@/lib/publish-gate';
 
+export function generateStaticParams() {
+  return [{ id: 'demo' }];
+}
+
 export async function GET(request: Request, { params }: { params: { id: string } }) {
   try {
     const order = await prisma.educationOrder.findUnique({

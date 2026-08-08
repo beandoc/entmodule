@@ -248,6 +248,15 @@ export const clinicianGroup: NavGroup = {
       icon: FileText,
       keywords: 'snomed icd publish gate topics',
     },
+    {
+      href: '/audiologist',
+      label: 'Audiologist Workspace',
+      labelHi: 'ऑडियोलॉजिस्ट कार्यक्षेत्र',
+      description: 'PTA audiogram plotter & tinnitus sound therapy',
+      descriptionHi: 'शुद्ध स्वर श्रवणलेख और टिनिटस साउंड थेरेपी',
+      icon: Ear,
+      keywords: 'audiogram pta pure tone audiometry tinnitus hearing aid fitting speech in noise audiologist',
+    },
   ],
 };
 

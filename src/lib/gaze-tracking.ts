@@ -49,6 +49,12 @@ export interface GazePoint {
   ear?: number;
   /** Disagreement magnitude between left and right eye gaze vectors. */
   eyeDisagreement?: number;
+  /** Individual left eye gaze position normalized to [0,1]. */
+  leftEyeX?: number;
+  leftEyeY?: number;
+  /** Individual right eye gaze position normalized to [0,1]. */
+  rightEyeX?: number;
+  rightEyeY?: number;
 }
 
 export interface CalibrationPointSample {
@@ -319,9 +325,11 @@ export function extractGazeFromLandmarks(
   const gazeX = Math.min(Math.max(0.5 - deltaX * GAZE_GAIN_X, 0.02), 0.98);
   const gazeY = Math.min(Math.max(0.5 + deltaY * GAZE_GAIN_Y, 0.02), 0.98);
 
-  // Left vs Right eye agreement check
-  const lGazeX = 0.5 - (lOffsetX - zeroX) * GAZE_GAIN_X;
-  const rGazeX = 0.5 - (rOffsetX - zeroX) * GAZE_GAIN_X;
+  // Left vs Right eye position tracking (clamped to 0.02 - 0.98 screen bounds)
+  const lGazeX = Math.min(Math.max(0.5 - (lOffsetX - zeroX) * GAZE_GAIN_X, 0.02), 0.98);
+  const rGazeX = Math.min(Math.max(0.5 - (rOffsetX - zeroX) * GAZE_GAIN_X, 0.02), 0.98);
+  const lGazeY = Math.min(Math.max(0.5 + (lOffsetY - zeroY) * GAZE_GAIN_Y, 0.02), 0.98);
+  const rGazeY = Math.min(Math.max(0.5 + (rOffsetY - zeroY) * GAZE_GAIN_Y, 0.02), 0.98);
   const eyeDisagreement = Math.abs(lGazeX - rGazeX);
 
   // Confidence calculation
@@ -352,6 +360,10 @@ export function extractGazeFromLandmarks(
     isBlink,
     ear,
     eyeDisagreement,
+    leftEyeX: lGazeX,
+    leftEyeY: lGazeY,
+    rightEyeX: rGazeX,
+    rightEyeY: rGazeY,
   };
 }
 

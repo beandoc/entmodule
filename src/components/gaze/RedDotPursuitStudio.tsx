@@ -284,6 +284,35 @@ export const RedDotPursuitTab: React.FC<{
           const dist = Math.hypot(curLiveData.gazeX - tx, curLiveData.gazeY - ty);
           setLiveErrorPct(Math.min(Math.round(dist * 100 * 2), 100));
         }
+
+        if (pattern === 'vor-x2' && curTesting) {
+          const recentHeads = headHistoryRef.current.slice(-30);
+          if (recentHeads.length > 10) {
+            const dtSec = (recentHeads[recentHeads.length - 1].t - recentHeads[0].t) / 1000;
+            const yawSpan = Math.abs(recentHeads[recentHeads.length - 1].yaw - recentHeads[0].yaw);
+            const headVel = dtSec > 0 ? yawSpan / dtSec : 0;
+            if (headVel < 12) {
+              ctx.save();
+              ctx.fillStyle = 'rgba(225, 29, 72, 0.9)';
+              ctx.shadowColor = 'rgba(225, 29, 72, 0.5)';
+              ctx.shadowBlur = 12;
+              ctx.beginPath();
+              ctx.roundRect(w / 2 - 210, 60, 420, 34, 10);
+              ctx.fill();
+              ctx.fillStyle = '#ffffff';
+              ctx.font = 'bold 11px sans-serif';
+              ctx.textAlign = 'center';
+              ctx.fillText(
+                hi
+                  ? '🗣 VOR x2: कृपया सिर को लाल बिंदु की विपरीत दिशा में घुमाएं (1–2 Hz)!'
+                  : '🗣 VOR x2 ACTIVE: Turn your head left & right opposite to the red dot!',
+                w / 2,
+                82
+              );
+              ctx.restore();
+            }
+          }
+        }
       }
     };
 

@@ -1640,12 +1640,17 @@ export function scoreSmoothPursuit(
     const tgt = targetSeries[i];
     const prevTgt = targetSeries[i - 1];
     const dt = (tgt.t - prevTgt.t) / 1000;
-    if (dt <= 0) continue;
+    const tvx = (tgt.x - prevTgt.x) / dt;
+    const tvy = (tgt.y - prevTgt.y) / dt;
+    const tvMag = Math.sqrt(tvx * tvx + tvy * tvy);
+
+    // Only evaluate tracking error & velocity agreement while target stimulus is actively moving
+    if (tvMag < 0.02) continue;
 
     const gaze = interpolateGaze(gazeSeries, tgt.t);
     if (!gaze) continue;
 
-    // Distance error
+    // Distance error during active movement
     const dx = gaze.x - tgt.x;
     const dy = gaze.y - tgt.y;
     const dist = Math.sqrt(dx * dx + dy * dy);
@@ -1655,8 +1660,6 @@ export function scoreSmoothPursuit(
     const prevGaze = interpolateGaze(gazeSeries, prevTgt.t);
     if (!prevGaze) continue;
 
-    const tvx = (tgt.x - prevTgt.x) / dt;
-    const tvy = (tgt.y - prevTgt.y) / dt;
     const gvx = (gaze.x - prevGaze.x) / dt;
     const gvy = (gaze.y - prevGaze.y) / dt;
 
@@ -1665,11 +1668,9 @@ export function scoreSmoothPursuit(
     sumGazeSq += gvx * gvx + gvy * gvy;
   }
 
-  // Regression gain: the scalar k minimising Σ|gazeVel - k·targetVel|².
-  // Signed, so anti-phase tracking (right speed, wrong direction) reports
-  // negative rather than the same ~1.0 an amplitude-only ratio would give it.
+  // Regression gain: normalized to max 1.05 for normal full-amplitude pursuit
   const rawGain = sumTgtSq > 1e-9 ? sumDot / sumTgtSq : 0;
-  const pursuitGain = Math.min(Math.max(parseFloat(rawGain.toFixed(2)), -1.5), 1.5);
+  const pursuitGain = Math.min(Math.max(parseFloat(rawGain.toFixed(2)), -1.0), 1.05);
 
   // Cosine similarity between the two velocity vectors — the phase/direction
   // agreement independent of speed, so a gain near 1.0 achieved by chance

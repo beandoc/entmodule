@@ -170,10 +170,13 @@ export function scoreSmoothPursuitVNG(
 
     const tvx = (tgt.x - prevTgt.x) / dtSec;
     const tvy = (tgt.y - prevTgt.y) / dtSec;
+    const tvMag = Math.sqrt(tvx * tvx + tvy * tvy);
+
+    // Only evaluate smooth pursuit while target stimulus is actively moving
+    if (tvMag < 0.02) continue;
+
     const gvx = (gCurr.x - gPrev.x) / dtSec;
     const gvy = (gCurr.y - gPrev.y) / dtSec;
-
-    const tvMag = Math.sqrt(tvx * tvx + tvy * tvy);
     const gvMag = Math.sqrt(gvx * gvx + gvy * gvy);
 
     sumDot += gvx * tvx + gvy * tvy;
@@ -181,7 +184,7 @@ export function scoreSmoothPursuitVNG(
     sumGazeSq += gvx * gvx + gvy * gvy;
 
     if (tvMag > 0.1) {
-      instantaneousGains.push(gvMag / tvMag);
+      instantaneousGains.push(Math.min(gvMag / tvMag, 1.25));
     }
 
     // Retinal slip velocity (deg/s)
@@ -192,7 +195,7 @@ export function scoreSmoothPursuitVNG(
   }
 
   const rawVelocityGain = sumTgtSq > 1e-9 ? sumDot / sumTgtSq : 0;
-  const velocityGain = Math.min(Math.max(parseFloat(rawVelocityGain.toFixed(2)), -1.5), 1.5);
+  const velocityGain = Math.min(Math.max(parseFloat(rawVelocityGain.toFixed(2)), -1.0), 1.05);
 
   const denom = Math.sqrt(sumTgtSq * sumGazeSq);
   const directionalAgreement =

@@ -15,10 +15,12 @@ import {
   CERVICAL_ROM_LIMIT, VOR_MIN_VELOCITY, VOR_TARGET_VELOCITY,
   RED_FLAGS, hasRedFlags,
   loadProfile, saveProfile, loadSessions, saveSession, summariseAdherence,
+  syncSessionToBackend, fetchSessionsFromBackend, mergeSessions,
   type HeadPose, type HeadAxis, type RepCounterState, type CoachCue,
   type VestibularExercise, type VestibularSession, type AdherenceSummary,
   type PoseSmoothingState,
 } from '@/lib/vestibular-rx';
+import { getCurrentPatientId } from '@/lib/patient-context';
 import {
   createFaceTracker, openCamera, cameraErrorKey,
   type FaceTracker, type CameraHandle, type TrackedFace,
@@ -227,7 +229,12 @@ export const AIVertigoRehabCoach: React.FC = () => {
       setNeutralPose(profile.neutralPose);
       neutralRef.current = profile.neutralPose;
     }
-    setAdherence(summariseAdherence(loadSessions()));
+    const local = loadSessions();
+    setAdherence(summariseAdherence(local));
+    // Cross-device longitudinal adherence: merge in the backend copy, best-effort.
+    fetchSessionsFromBackend(getCurrentPatientId()).then((remote) => {
+      if (remote.length > 0) setAdherence(summariseAdherence(mergeSessions(local, remote)));
+    });
   }, []);
 
   /* ------------------------------------------------- load the vision model */
@@ -543,6 +550,7 @@ export const AIVertigoRehabCoach: React.FC = () => {
     };
     setAdherence(summariseAdherence(saveSession(session)));
     setSavedSessionId(session.id);
+    syncSessionToBackend(getCurrentPatientId(), session);
   }, [exercise, hud.reps, quality, dizzinessBefore, dizzinessAfter]);
 
   const redFlagsPresent = hasRedFlags(flagsChecked);

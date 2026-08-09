@@ -5,6 +5,7 @@ import {
   summariseGazeAdherence, generateInsight,
   computeSlowPhaseVelocity, computeOptokineticMetrics,
   oknTargetX, OKN_STIMULUS_DEG_PER_SEC, OKN_DIRECTION_PERIOD_SEC, DEG_PER_UNIT,
+  downsampleSeries, mergeGazeSessions, validateVorX2Opposition,
 } from '../src/lib/gaze-tracking.ts';
 
 console.log('--------------------------------------------------------');
@@ -244,13 +245,14 @@ const targets = Array.from({ length: PN }, (_, i) => ({
   ...targetAt(i), t: (i * 1000) / 60, mode: 'horizontal',
 }));
 
-// Perfect tracking: gain near 1, error near 0
+// Perfect tracking: gain near 1, error near 0, directional agreement near 1
 const perfect = series(PN, 60, (i) => targetAt(i));
 const perfectScore = scoreSmoothPursuit(targets, perfect, detectSaccades(perfect));
 assert.ok(perfectScore.pursuitGain > 0.9, `perfect tracking must score high gain, got ${perfectScore.pursuitGain}`);
+assert.ok(perfectScore.directionalAgreement > 0.9, `perfect tracking must have near-1 directional agreement, got ${perfectScore.directionalAgreement}`);
 assert.ok(perfectScore.meanTrackingErrorPct < 5, `perfect tracking must have low error, got ${perfectScore.meanTrackingErrorPct}%`);
 assert.equal(perfectScore.quality, 'excellent');
-console.log(`   [PASS] perfect tracking scores gain ${perfectScore.pursuitGain}, error ${perfectScore.meanTrackingErrorPct}%`);
+console.log(`   [PASS] perfect tracking scores gain ${perfectScore.pursuitGain}, agreement ${perfectScore.directionalAgreement}, error ${perfectScore.meanTrackingErrorPct}%`);
 
 // A frozen eye tracks nothing
 const frozenPursuit = series(PN, 60, () => ({ x: 0.5, y: 0.5 }));
@@ -258,6 +260,26 @@ const frozenScore = scoreSmoothPursuit(targets, frozenPursuit, detectSaccades(fr
 assert.ok(frozenScore.pursuitGain < 0.2, `a frozen eye must score near-zero gain, got ${frozenScore.pursuitGain}`);
 assert.equal(frozenScore.quality, 'impaired');
 console.log(`   [PASS] a frozen eye scores gain ${frozenScore.pursuitGain} (impaired)`);
+
+// CRITICAL (regression guard): tracking exactly opposite the target — equal
+// amplitude and speed, 180° out of phase — used to score a falsely healthy
+// gain near 1.0 from an amplitude-only ratio. It must now score negative gain,
+// negative directional agreement, and 'impaired' — never 'excellent'/'good'.
+const antiPhaseAt = (i) => ({ x: 0.5 - 0.35 * Math.sin((i / 60) * 2 * Math.PI * 0.4), y: 0.5 });
+const antiPhase = series(PN, 60, (i) => antiPhaseAt(i));
+const antiPhaseScore = scoreSmoothPursuit(targets, antiPhase, detectSaccades(antiPhase));
+assert.ok(antiPhaseScore.pursuitGain < 0, `anti-phase tracking must score negative gain, got ${antiPhaseScore.pursuitGain}`);
+assert.ok(antiPhaseScore.directionalAgreement < -0.5, `anti-phase tracking must show strong negative agreement, got ${antiPhaseScore.directionalAgreement}`);
+assert.equal(antiPhaseScore.quality, 'impaired', 'anti-phase tracking must never read as good tracking');
+console.log(`   [PASS] anti-phase tracking (equal amplitude, opposite direction) scores gain ${antiPhaseScore.pursuitGain}, agreement ${antiPhaseScore.directionalAgreement}, quality impaired`);
+
+// Uncorrelated motion (same amplitude, unrelated frequency) must not pass as
+// tracking just because the two happen to have similar speed on average.
+const uncorrelated = series(PN, 60, (i) => ({ x: 0.5 + 0.35 * Math.sin((i / 60) * 2 * Math.PI * 1.7), y: 0.5 }));
+const uncorrelatedScore = scoreSmoothPursuit(targets, uncorrelated, detectSaccades(uncorrelated));
+assert.ok(Math.abs(uncorrelatedScore.directionalAgreement) < 0.5, `unrelated motion must show weak agreement, got ${uncorrelatedScore.directionalAgreement}`);
+assert.equal(uncorrelatedScore.quality, 'impaired', 'weakly-correlated motion must not read as good tracking');
+console.log(`   [PASS] motion at an unrelated frequency shows weak agreement (${uncorrelatedScore.directionalAgreement}) and reads impaired`);
 
 // Catch-up saccades are only those moving TOWARD the target. Build a gaze that
 // makes one corrective saccade toward a target parked on the right, then one
@@ -290,6 +312,33 @@ const thin = scoreSmoothPursuit(targets.slice(0, 2), perfect.slice(0, 2), []);
 assert.equal(thin.pursuitGain, 0);
 assert.ok(thin.guidance.length > 0, 'a degraded score must still explain itself');
 console.log('   [PASS] insufficient data yields a zero score with guidance');
+
+// 6b. VOR x2 head/target opposition validation
+console.log('\n6b. Testing VOR x2 head-target opposition validation...');
+
+// A head genuinely turning opposite the moving dot must validate.
+const opposingHead = headSeries(PN, 60, (i) => -25 * Math.sin((i / 60) * 2 * Math.PI * 0.4));
+const opposed = validateVorX2Opposition(targets, opposingHead);
+assert.ok(opposed.oppositionValidated, `head genuinely coupled to the target must validate, got r=${opposed.headTargetCorrelation}`);
+console.log(`   [PASS] head opposing the target validates (r=${opposed.headTargetCorrelation})`);
+
+// CRITICAL: a head that barely moved must NOT validate — this is the case
+// scoreVOR's magnitude-only gain could previously score as "excellent" with
+// no check that the VOR x2 manoeuvre (head opposing target) ever happened.
+const stillHeadX2 = headSeries(PN, 60, () => 0);
+const notOpposed = validateVorX2Opposition(targets, stillHeadX2);
+assert.equal(notOpposed.oppositionValidated, false, 'a near-stationary head must not validate as opposing the target');
+console.log('   [PASS] a stationary head does not validate opposition');
+
+// A head moving at a frequency unrelated to the target must not validate either.
+const unrelatedHead = headSeries(PN, 60, (i) => 25 * Math.sin((i / 60) * 2 * Math.PI * 1.7));
+const unrelatedOpp = validateVorX2Opposition(targets, unrelatedHead);
+assert.equal(unrelatedOpp.oppositionValidated, false, 'head motion unrelated to the target must not validate');
+console.log(`   [PASS] head motion at an unrelated frequency does not validate (r=${unrelatedOpp.headTargetCorrelation})`);
+
+// Degenerate input must not throw.
+assert.equal(validateVorX2Opposition([], []).oppositionValidated, false);
+console.log('   [PASS] empty input degrades safely');
 
 // 7. Full pipeline and reporting
 console.log('\n7. Testing the session pipeline...');
@@ -478,6 +527,50 @@ assert.ok(
   'the sweep must reverse direction on the second leg'
 );
 console.log(`   [PASS] the sweep runs at ${OKN_STIMULUS_DEG_PER_SEC} °/s and reverses after ${OKN_DIRECTION_PERIOD_SEC} s`);
+
+// 10. Backend telemetry helpers
+console.log('\n10. Testing telemetry downsampling and session merge...');
+
+// A short series is returned unchanged — nothing to reduce.
+const shortSeries = Array.from({ length: 50 }, (_, i) => ({ t: i }));
+assert.deepEqual(downsampleSeries(shortSeries, 400), shortSeries, 'a series under the cap must pass through unchanged');
+console.log('   [PASS] a series under the cap is returned unchanged');
+
+// A long series is reduced to exactly the cap, keeping the first and last sample.
+const longSeries = Array.from({ length: 10000 }, (_, i) => ({ t: i }));
+const down = downsampleSeries(longSeries, 400);
+assert.equal(down.length, 400, `downsampling to 400 must yield exactly 400 samples, got ${down.length}`);
+assert.equal(down[0].t, 0, 'the first sample must survive downsampling');
+assert.equal(down[down.length - 1].t, 9999, 'the last sample must survive downsampling');
+// Monotonically increasing — the stride must not reorder or duplicate out of order.
+for (let i = 1; i < down.length; i++) {
+  assert.ok(down[i].t > down[i - 1].t, 'downsampled indices must stay strictly increasing');
+}
+console.log(`   [PASS] 10 000 samples downsample to exactly ${down.length}, first/last preserved, order intact`);
+
+// Degenerate caps must not throw.
+assert.deepEqual(downsampleSeries(longSeries, 0), [], 'a zero cap must yield an empty series');
+assert.equal(downsampleSeries(longSeries, 1).length, 1, 'a cap of 1 must yield exactly one sample');
+console.log('   [PASS] a zero cap and a cap of one degrade safely');
+
+// mergeGazeSessions: de-duplicates by id, local wins on conflict, sorted oldest-first.
+const mkSess = (id, createdAt, gain) => ({
+  id, date: createdAt.slice(0, 10), exerciseId: 'gaze-session', durationMs: 1000, createdAt,
+  analytics: { ...analytics, vorScore: { ...analytics.vorScore, gain } },
+});
+const remoteOnly = mkSess('a', '2026-01-01T00:00:00.000Z', 0.5);
+const localOnly = mkSess('b', '2026-01-02T00:00:00.000Z', 0.6);
+const conflictRemote = mkSess('c', '2026-01-03T00:00:00.000Z', 0.1);
+const conflictLocal = mkSess('c', '2026-01-03T00:00:00.000Z', 0.9);
+
+const merged = mergeGazeSessions([localOnly, conflictLocal], [remoteOnly, conflictRemote]);
+assert.equal(merged.length, 3, `merging must de-duplicate by id, got ${merged.length}`);
+assert.deepEqual(merged.map(s => s.id), ['a', 'b', 'c'], 'merged sessions must sort oldest-first by createdAt');
+assert.equal(
+  merged.find(s => s.id === 'c').analytics.vorScore.gain, 0.9,
+  'on an id conflict the local copy must win'
+);
+console.log('   [PASS] mergeGazeSessions de-duplicates by id, sorts oldest-first, and local wins conflicts');
 
 console.log('\n--------------------------------------------------------');
 console.log('All gaze analytics tests passed.');

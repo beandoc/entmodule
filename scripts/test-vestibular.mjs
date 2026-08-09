@@ -8,7 +8,7 @@ import {
   EXERCISES, exerciseById, EPLEY, BRANDT_DAROFF, manoeuvreDuration, renderInstruction,
   RED_FLAGS, hasRedFlags,
   DHI_ITEMS, DHI_OPTIONS, DHI_SUBSCALE_MAX, scoreDhi, scoreDhiSubscale, dhiBandFor, DHI_BANDS,
-  summariseAdherence,
+  summariseAdherence, mergeSessions,
 } from '../src/lib/vestibular-rx.ts';
 
 console.log('--------------------------------------------------------');
@@ -458,6 +458,27 @@ assert.equal(
   'streaks must span month boundaries'
 );
 console.log('   [PASS] streaks, trailing-week adherence, same-day dedupe and month boundaries');
+
+// 10. Backend session merge
+console.log('\n10. Testing local/backend session merge...');
+const mkVSession = (id, createdAt, reps) => ({
+  id, date: createdAt.slice(0, 10), exerciseId: 'vor-x1-horizontal', reps, targetReps: 20,
+  meanPeakAngle: 30, meanPeakVelocity: 120, qualityScore: 80,
+  dizzinessBefore: 5, dizzinessAfter: 3, mode: 'coach', createdAt,
+});
+const remoteOnlyS = mkVSession('a', '2026-01-01T00:00:00.000Z', 10);
+const localOnlyS = mkVSession('b', '2026-01-02T00:00:00.000Z', 15);
+const conflictRemoteS = mkVSession('c', '2026-01-03T00:00:00.000Z', 5);
+const conflictLocalS = mkVSession('c', '2026-01-03T00:00:00.000Z', 20);
+
+const mergedS = mergeSessions([localOnlyS, conflictLocalS], [remoteOnlyS, conflictRemoteS]);
+assert.equal(mergedS.length, 3, `merging must de-duplicate by id, got ${mergedS.length}`);
+assert.deepEqual(mergedS.map((s) => s.id), ['c', 'b', 'a'], 'merged sessions must sort newest-first by createdAt');
+assert.equal(
+  mergedS.find((s) => s.id === 'c').reps, 20,
+  'on an id conflict the local copy must win'
+);
+console.log('   [PASS] mergeSessions de-duplicates by id, sorts newest-first, and local wins conflicts');
 
 console.log('\n--------------------------------------------------------');
 console.log('All vestibular rehabilitation tests passed.');

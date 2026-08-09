@@ -1,0 +1,41 @@
+rules_version = '2';
+
+// This app has no working sign-in flow yet (see the header comment in
+// src/lib/api-auth.ts, which documents the same gap on the Prisma side), so
+// these rules cannot scope access by patient identity today. Until real auth
+// ships, the policy is:
+//
+//   - Writes to vestibular telemetry go through the server API routes only
+//     (/api/vestibular/session, /api/vestibular/gaze-telemetry), which use
+//     the Admin SDK and bypass these rules entirely. Direct client writes are
+//     denied here so a page cannot fabricate or tamper with session data by
+//     calling the client SDK directly.
+//   - Reads are left open on those two collections because the clinician
+//     "live telemetry" listener (useVestibularSessionListener) subscribes via
+//     the client SDK with no auth to key a scope off. This is a known,
+//     documented interim gap — tighten to per-patient/per-clinician scoping
+//     the moment real authentication exists.
+//   - Everything else defaults to fully closed, since nothing else in this
+//     app is known to need direct client Firestore access except
+//     audiology_evaluations (kept open to match its existing behaviour).
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /vestibular_sessions/{sessionId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /vestibular_gaze_telemetry/{sessionId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /audiology_evaluations/{evalId} {
+      allow read, write: if true;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -63,35 +63,31 @@ export interface PrescriptionDocument {
   notes?: string;
 }
 
-/* ------------------------------------------------------------------ 3. Telemetry Session Logs */
+/* ------------------------------------------------------------------ 3. Rep-Counter Exercise Sessions */
 
-export type SessionSafetyStatus = "NORMAL" | "STABILITY_WARNING" | "SAFETY_ABORT";
-
-export interface SessionTelemetry {
-  maxLateralSwayCm: number;
-  maxAnteriorPosteriorSwayCm: number;
-  meanHeadRollDegrees: number;
-  meanHeadPitchDegrees: number;
-  meanHeadYawDegrees: number;
-  cadenceHz: number;
-  offBalanceEventsCount: number;
-  voiceCuesTriggeredCount: number;
-}
-
+/**
+ * Mirrors `VestibularSession` in `vestibular-rx.ts` — the camera-tracked,
+ * hysteresis-gated rep-counter drills (VOR x1/x2, habituation, cervicogenic
+ * shrug). Backend copy of what `saveSession()` already persists to
+ * localStorage on-device, so it survives across devices and is queryable
+ * per-patient for longitudinal adherence/quality trend tracking.
+ */
 export interface VestibularSessionDocument {
   id?: string;
   patientId: string;
   prescriptionId?: string;
   exerciseId: string;
-  exerciseTitle: string;
-  eyesClosed: boolean;
-  durationCompletedSeconds: number;
-  targetDurationSeconds: number;
-  overallCompliancePercent: number;
-  eyesClosedCompliancePercent: number; // Eye Aspect Ratio (EAR) compliance check
-  telemetry: SessionTelemetry;
-  safetyStatus: SessionSafetyStatus;
-  postExerciseDizzinessScore?: number; // 0-10 VAS scale
+  exerciseTitle?: string;
+  reps: number;
+  targetReps: number;
+  meanPeakAngle: number;
+  meanPeakVelocity: number;
+  qualityScore: number;
+  dizzinessBefore: number;
+  dizzinessAfter: number;
+  /** 'coach' for camera-tracked, 'manual' for the checklist guide. */
+  mode: "coach" | "manual";
+  date: string;
   timestamp: Timestamp;
 }
 
@@ -112,12 +108,41 @@ export interface PromsEvaluationDocument {
   timestamp: Timestamp;
 }
 
+/* ------------------------------------------------------------------ 5. Gaze / VOR Telemetry (raw, per-sample) */
+
+/**
+ * Backend copy of `GazeSession` (gaze-tracking.ts), for the VOR-gain /
+ * nystagmus / slow-phase-velocity pipeline. Unlike `VestibularSessionDocument`
+ * above, this carries a downsampled *raw* sample stream (`gazeSeries` /
+ * `headSeries`), not just the computed summary — that raw stream is the whole
+ * point: it is what a clinician can later cross-correlate against a reference
+ * VNG unit's own trace to calibrate `DEG_PER_UNIT` / `GAZE_GAIN_X` in
+ * gaze-tracking.ts against ground truth, which the computed summary alone
+ * cannot support.
+ */
+export interface GazeTelemetryDocument {
+  id?: string;
+  patientId: string;
+  exerciseId: string;
+  date: string;
+  durationMs: number;
+  analytics: unknown; // GazeAnalytics — kept loosely typed here to avoid importing the client gaze-tracking module into schema-only code
+  gazeSeries?: Array<{ t: number; x: number; y: number; hasIris: boolean }>;
+  headSeries?: Array<{ t: number; yaw: number }>;
+  /** Free-text tag marking this as a paired recording against a reference device. */
+  referenceTag?: string;
+  /** Client `t` of a manually marked sync event, for offline clock alignment. */
+  syncMarkerT?: number;
+  timestamp: Timestamp;
+}
+
 /* ------------------------------------------------------------------ Collection Names */
 
 export const FIRESTORE_COLLECTIONS = {
   USERS: "users",
   PRESCRIPTIONS: "vestibular_prescriptions",
   SESSIONS: "vestibular_sessions",
+  GAZE_TELEMETRY: "vestibular_gaze_telemetry",
   PROMS: "proms_evaluations",
   VOICE_CUES_LOG: "voice_cues_log",
 } as const;

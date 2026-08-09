@@ -198,6 +198,20 @@ export interface GazeAnalytics {
   insight: string;
 }
 
+/** Lean raw sample for backend telemetry — see `downsampleSeries`. */
+export interface TelemetryGazeSample {
+  t: number;
+  x: number;
+  y: number;
+  hasIris: boolean;
+}
+
+/** Lean raw head-yaw sample, paired with `TelemetryGazeSample` by timestamp. */
+export interface TelemetryHeadSample {
+  t: number;
+  yaw: number;
+}
+
 export interface GazeSession {
   id: string;
   date: string;
@@ -205,6 +219,21 @@ export interface GazeSession {
   analytics: GazeAnalytics;
   durationMs: number;
   createdAt: string;
+  /** Absent on sessions saved before backend sync existed, or saved offline. */
+  patientId?: string;
+  /** Downsampled raw gaze series — kept for calibration against a reference VNG unit. */
+  gazeSeries?: TelemetryGazeSample[];
+  /** Downsampled raw head-yaw series, paired with `gazeSeries` by timestamp. */
+  headSeries?: TelemetryHeadSample[];
+  /** Free-text tag marking this as a paired recording against a reference device, e.g. "VNG ICS Impulse run #4". */
+  referenceTag?: string;
+  /**
+   * Client `t` (same clock as `gazeSeries[].t`) of a manually marked sync
+   * event — e.g. a rapid head shake at the start of a paired recording — so
+   * this session's clock can be cross-correlated against a reference device's
+   * independent clock during offline analysis.
+   */
+  syncMarkerT?: number;
 }
 
 /* =========================================================== constants */
@@ -377,11 +406,30 @@ export function extractGazeFromLandmarks(
   const gazeX = Math.min(Math.max(0.5 - deltaX * GAZE_GAIN_X, 0.02), 0.98);
   const gazeY = Math.min(Math.max(0.5 + deltaY * GAZE_GAIN_Y, 0.02), 0.98);
 
-  // Left vs Right eye position tracking (clamped to 0.02 - 0.98 screen bounds)
-  const lGazeX = Math.min(Math.max(0.5 - (lOffsetX - zeroX) * GAZE_GAIN_X, 0.02), 0.98);
-  const rGazeX = Math.min(Math.max(0.5 - (rOffsetX - zeroX) * GAZE_GAIN_X, 0.02), 0.98);
-  const lGazeY = Math.min(Math.max(0.5 + (lOffsetY - zeroY) * GAZE_GAIN_Y, 0.02), 0.98);
-  const rGazeY = Math.min(Math.max(0.5 + (rOffsetY - zeroY) * GAZE_GAIN_Y, 0.02), 0.98);
+  // Baseline Auto-Centered Left vs Right eye position tracking (centered at 0.5 ~ 0° Center)
+  // Subtract static intra-ocular offset so both eyes rest at 0.5 (0° Center) during neutral gaze
+  const lDevX = lOffsetX - zeroX - (lOffsetX - avgOffsetX);
+  const rDevX = rOffsetX - zeroX - (rOffsetX - avgOffsetX);
+  const lDevY = lOffsetY - zeroY - (lOffsetY - avgOffsetY);
+  const rDevY = rOffsetY - zeroY - (rOffsetY - avgOffsetY);
+
+  let lRotX = lDevX;
+  let rRotX = rDevX;
+  let lRotY = lDevY;
+  let rRotY = rDevY;
+  if (headPose) {
+    const yawComp = (headPose.yaw / 45) * 0.12;
+    const pitchComp = (headPose.pitch / 45) * 0.12;
+    lRotX -= yawComp;
+    rRotX -= yawComp;
+    lRotY += pitchComp;
+    rRotY += pitchComp;
+  }
+
+  const lGazeX = Math.min(Math.max(0.5 - lRotX * GAZE_GAIN_X, 0.02), 0.98);
+  const rGazeX = Math.min(Math.max(0.5 - rRotX * GAZE_GAIN_X, 0.02), 0.98);
+  const lGazeY = Math.min(Math.max(0.5 + lRotY * GAZE_GAIN_Y, 0.02), 0.98);
+  const rGazeY = Math.min(Math.max(0.5 + rRotY * GAZE_GAIN_Y, 0.02), 0.98);
   const eyeDisagreement = Math.abs(lGazeX - rGazeX);
 
   // Confidence calculation
@@ -1370,6 +1418,100 @@ export function saveGazeSession(session: GazeSession): GazeSession[] {
   return trimmed;
 }
 
+/* =========================================================== backend telemetry sync */
+
+/**
+ * Uniformly stride a series down to at most `maxSamples`, always keeping the
+ * first and last sample. Bounds telemetry payload size before persistence —
+ * Firestore documents cap at 1 MiB, and a raw ~60 Hz stream over a multi-
+ * minute session would exceed that if stored in full.
+ */
+export function downsampleSeries<T>(series: T[], maxSamples: number): T[] {
+  if (maxSamples <= 0) return [];
+  if (series.length <= maxSamples || maxSamples === 1) return series.slice(0, maxSamples || series.length);
+  const stride = (series.length - 1) / (maxSamples - 1);
+  const out: T[] = [];
+  for (let i = 0; i < maxSamples; i++) {
+    out.push(series[Math.round(i * stride)]);
+  }
+  return out;
+}
+
+/** Sample cap for routine sessions — enough for a coarse trend waveform. */
+export const TELEMETRY_ROUTINE_SAMPLES = 400;
+/**
+ * Sample cap for sessions explicitly tagged as a paired reference/calibration
+ * recording (`GazeSession.referenceTag` set) — enough temporal resolution to
+ * support fitting a correction against a VNG unit's own trace.
+ */
+export const TELEMETRY_CALIBRATION_SAMPLES = 3000;
+
+const GAZE_TELEMETRY_ENDPOINT = '/api/vestibular/gaze-telemetry';
+
+/**
+ * Best-effort backend sync. `saveGazeSession` (localStorage) remains this
+ * device's source of truth for its own UI — the exercise flow must never block
+ * or fail because a network call did — so this is fire-and-forget and swallows
+ * every error. No-ops outside the browser since there is nothing to reach.
+ */
+export function syncGazeSessionToBackend(session: GazeSession): void {
+  if (typeof window === 'undefined') return;
+  fetch(GAZE_TELEMETRY_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(session),
+  }).catch(() => {
+    // Best-effort — the session already persisted to localStorage.
+  });
+}
+
+/**
+ * This patient's gaze-telemetry sessions from the backend, for cross-device
+ * longitudinal tracking. Fetches summaries only (no raw series) — a trend
+ * chart needs `analytics`, not the full sample stream of every past session.
+ * Returns `[]` on any failure so a caller can always fall back to
+ * `loadGazeSessions()` alone.
+ */
+export async function fetchGazeSessionsFromBackend(patientId: string): Promise<GazeSession[]> {
+  try {
+    const res = await fetch(`${GAZE_TELEMETRY_ENDPOINT}?patientId=${encodeURIComponent(patientId)}&summary=1`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data.sessions) ? (data.sessions as GazeSession[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * A single session's full record, including its raw `gazeSeries`/`headSeries`
+ * — for offline calibration analysis against a reference VNG unit. Returns
+ * `null` on any failure.
+ */
+export async function fetchGazeSessionDetail(sessionId: string): Promise<GazeSession | null> {
+  try {
+    const res = await fetch(`${GAZE_TELEMETRY_ENDPOINT}?id=${encodeURIComponent(sessionId)}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.session ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Merge backend and local sessions for one patient, de-duplicated by `id`
+ * (the same session synced from two devices, or synced then also present
+ * locally, must not double-count in adherence/trend stats). Local wins on
+ * conflict since it may include an in-progress edit the backend hasn't seen.
+ */
+export function mergeGazeSessions(local: GazeSession[], remote: GazeSession[]): GazeSession[] {
+  const byId = new Map<string, GazeSession>();
+  for (const s of remote) byId.set(s.id, s);
+  for (const s of local) byId.set(s.id, s);
+  return [...byId.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
 export function summariseGazeAdherence(sessions: GazeSession[]): {
   totalSessions: number;
   meanVORGain: number;
@@ -1409,8 +1551,22 @@ export interface PursuitTargetPoint {
 }
 
 export interface PursuitScore {
-  /** Pursuit Gain = mean(eye velocity) / mean(target velocity). Ideal = 1.0 */
+  /**
+   * Directional velocity gain: the least-squares scalar that best maps target
+   * velocity onto gaze velocity, i.e. Σ(gazeVel·targetVel) / Σ|targetVel|².
+   * Ideal = 1.0. Unlike an amplitude ratio, this is signed — tracking that is
+   * out of phase with the target (moving the right amount, wrong direction)
+   * scores negative rather than a falsely healthy ~1.0.
+   */
   pursuitGain: number;
+  /**
+   * Cosine similarity between the gaze-velocity and target-velocity vectors
+   * over the whole trial, [-1, 1]. 1 = perfectly in-phase, -1 = perfectly
+   * anti-phase, ~0 = the two are uncorrelated (noisy or absent pursuit). This
+   * is what separates "tracking well" from "coincidentally similar speed" —
+   * `pursuitGain` alone cannot.
+   */
+  directionalAgreement: number;
   /** Mean spatial tracking error in normalized percentage (0-100%) */
   meanTrackingErrorPct: number;
   /** Number of catch-up prosaccades executed to re-align with target */
@@ -1453,6 +1609,7 @@ export function scoreSmoothPursuit(
   if (targetSeries.length < 5 || gazeSeries.length < 5) {
     return {
       pursuitGain: 0,
+      directionalAgreement: 0,
       meanTrackingErrorPct: 0,
       catchUpSaccadeCount: 0,
       quality: 'fair',
@@ -1463,8 +1620,13 @@ export function scoreSmoothPursuit(
   let totalError = 0;
   let sampleCount = 0;
 
-  const targetVelocities: number[] = [];
-  const gazeVelocities: number[] = [];
+  // Least-squares gain and cosine-similarity agreement both fall out of the
+  // same three running sums over the 2D velocity vectors, so both are
+  // accumulated in one pass rather than reducing to unsigned magnitude first
+  // (which is what threw away direction in the previous implementation).
+  let sumDot = 0;
+  let sumTgtSq = 0;
+  let sumGazeSq = 0;
 
   for (let i = 1; i < targetSeries.length; i++) {
     const tgt = targetSeries[i];
@@ -1482,44 +1644,33 @@ export function scoreSmoothPursuit(
     totalError += dist;
     sampleCount++;
 
-    // Target velocity
-    const tdx = tgt.x - prevTgt.x;
-    const tdy = tgt.y - prevTgt.y;
-    const tgtVel = Math.sqrt(tdx * tdx + tdy * tdy) / dt;
-    targetVelocities.push(tgtVel);
-
-    // Gaze velocity
     const prevGaze = interpolateGaze(gazeSeries, prevTgt.t);
-    if (prevGaze) {
-      const gdx = gaze.x - prevGaze.x;
-      const gdy = gaze.y - prevGaze.y;
-      const gazeVel = Math.sqrt(gdx * gdx + gdy * gdy) / dt;
-      gazeVelocities.push(gazeVel);
-    }
+    if (!prevGaze) continue;
+
+    const tvx = (tgt.x - prevTgt.x) / dt;
+    const tvy = (tgt.y - prevTgt.y) / dt;
+    const gvx = (gaze.x - prevGaze.x) / dt;
+    const gvy = (gaze.y - prevGaze.y) / dt;
+
+    sumDot += gvx * tvx + gvy * tvy;
+    sumTgtSq += tvx * tvx + tvy * tvy;
+    sumGazeSq += gvx * gvx + gvy * gvy;
   }
 
-  // Compute standard deviation of target and gaze displacements
-  const targetXs = targetSeries.map(t => t.x);
-  const gazeXs = gazeSeries.map(g => g.x);
-  const targetYs = targetSeries.map(t => t.y);
-  const gazeYs = gazeSeries.map(g => g.y);
+  // Regression gain: the scalar k minimising Σ|gazeVel - k·targetVel|².
+  // Signed, so anti-phase tracking (right speed, wrong direction) reports
+  // negative rather than the same ~1.0 an amplitude-only ratio would give it.
+  const rawGain = sumTgtSq > 1e-9 ? sumDot / sumTgtSq : 0;
+  const pursuitGain = Math.min(Math.max(parseFloat(rawGain.toFixed(2)), -1.5), 1.5);
 
-  const meanTgtX = targetXs.reduce((s, v) => s + v, 0) / targetXs.length;
-  const meanGazeX = gazeXs.reduce((s, v) => s + v, 0) / gazeXs.length;
-  const meanTgtY = targetYs.reduce((s, v) => s + v, 0) / targetYs.length;
-  const meanGazeY = gazeYs.reduce((s, v) => s + v, 0) / gazeYs.length;
-
-  const stdTgtX = Math.sqrt(targetXs.reduce((s, v) => s + (v - meanTgtX) ** 2, 0) / targetXs.length);
-  const stdGazeX = Math.sqrt(gazeXs.reduce((s, v) => s + (v - meanGazeX) ** 2, 0) / gazeXs.length);
-  const stdTgtY = Math.sqrt(targetYs.reduce((s, v) => s + (v - meanTgtY) ** 2, 0) / targetYs.length);
-  const stdGazeY = Math.sqrt(gazeYs.reduce((s, v) => s + (v - meanGazeY) ** 2, 0) / gazeYs.length);
-
-  const stdTgt = Math.sqrt(stdTgtX * stdTgtX + stdTgtY * stdTgtY);
-  const stdGaze = Math.sqrt(stdGazeX * stdGazeX + stdGazeY * stdGazeY);
-
-  // Pursuit Gain = Ratio of Gaze Amplitude to Target Amplitude
-  const rawGain = stdTgt > 0.01 ? stdGaze / stdTgt : 0;
-  const pursuitGain = Math.min(Math.max(parseFloat(rawGain.toFixed(2)), 0), 1.5);
+  // Cosine similarity between the two velocity vectors — the phase/direction
+  // agreement independent of speed, so a gain near 1.0 achieved by chance
+  // (uncorrelated but similarly-sized motion) can still be told apart from
+  // real tracking.
+  const denom = Math.sqrt(sumTgtSq * sumGazeSq);
+  const directionalAgreement = denom > 1e-9
+    ? parseFloat(Math.min(Math.max(sumDot / denom, -1), 1).toFixed(2))
+    : 0;
 
   const meanError = sampleCount > 0 ? (totalError / sampleCount) * 100 : 0;
 
@@ -1540,19 +1691,28 @@ export function scoreSmoothPursuit(
     if (alignment > CATCH_UP_MIN_ALIGNMENT) catchUpSaccadeCount++;
   }
 
+  // Directional agreement gates quality first: a gain that only looks healthy
+  // because speed happened to match — with the eye moving uncorrelated with,
+  // or opposite to, the target — must not be reported as good tracking no
+  // matter what the (now still speed-only) error/gain numbers say alone.
   const quality: PursuitScore['quality'] =
+    directionalAgreement < 0.3 ? 'impaired' :
     pursuitGain >= 0.85 && meanError < 15 ? 'excellent' :
     pursuitGain >= 0.70 && meanError < 25 ? 'good' :
     pursuitGain >= 0.50 ? 'fair' : 'impaired';
 
+  const antiPhase = directionalAgreement < -0.3;
+
   let guidance = '';
   if (locale === 'hi') {
-    if (quality === 'excellent') guidance = 'स्मूथ परस्यूट उत्कृष्ट है — आपकी नज़र चलती हुई बिंदु का सटीक पीछा कर रही है।';
+    if (antiPhase) guidance = 'नज़र बिंदु के विपरीत दिशा में जा रही है — जांचें कि स्क्रीन सही ढंग से दिख रही है और दोबारा प्रयास करें।';
+    else if (quality === 'excellent') guidance = 'स्मूथ परस्यूट उत्कृष्ट है — आपकी नज़र चलती हुई बिंदु का सटीक पीछा कर रही है।';
     else if (quality === 'good') guidance = 'अच्छा ट्रैकिंग प्रदर्शन — नज़र में हल्का विचलन है, अभ्यास जारी रखें।';
     else if (quality === 'fair') guidance = 'मध्यम ट्रैकिंग — बिंदु से नज़र हटने पर कैच-अप सैकेड देखे गए।';
     else guidance = 'स्मूथ परस्यूट प्रभावित है — 2-पॉइंट नियम का पालन करें और अत्यधिक थकान से बचें।';
   } else {
-    if (quality === 'excellent') guidance = 'Excellent smooth pursuit — gaze accurately locked onto the moving target.';
+    if (antiPhase) guidance = 'Gaze is moving opposite the target — check the display is not mirrored and retry.';
+    else if (quality === 'excellent') guidance = 'Excellent smooth pursuit — gaze accurately locked onto the moving target.';
     else if (quality === 'good') guidance = 'Good tracking performance with minor gaze lag — continue daily practice.';
     else if (quality === 'fair') guidance = 'Moderate pursuit control — catch-up saccades observed as gaze fell behind target.';
     else guidance = 'Impaired smooth pursuit — monitor symptom escalation strictly (+2 Point Rule).';
@@ -1560,10 +1720,80 @@ export function scoreSmoothPursuit(
 
   return {
     pursuitGain,
+    directionalAgreement,
     meanTrackingErrorPct: parseFloat(meanError.toFixed(1)),
     catchUpSaccadeCount,
     quality,
     guidance,
+  };
+}
+
+/* =========================================================== VOR x2 opposition validation */
+
+/**
+ * Minimum |correlation| between head and target velocity for a VOR x2 trial
+ * to count as the manoeuvre actually being performed. Real webcam head-pose
+ * noise and imperfect patient technique mean this is set to "clearly
+ * coupled," not "textbook-perfect" — a value near 0 is the case being guarded
+ * against: head motion essentially unrelated to the target.
+ */
+const VOR_X2_MIN_OPPOSITION_CORRELATION = 0.35;
+
+export interface VorX2Validation {
+  /** Correlation between head angular velocity and target x velocity, [-1, 1]. */
+  headTargetCorrelation: number;
+  /**
+   * True once `|headTargetCorrelation|` clears the threshold — the patient
+   * actually opposed their head to the moving dot, the precondition
+   * `scoreVOR`'s reported gain depends on to mean what it claims to mean.
+   */
+  oppositionValidated: boolean;
+}
+
+const VOR_X2_NONE: VorX2Validation = { headTargetCorrelation: 0, oppositionValidated: false };
+
+/**
+ * Validate that head motion was coupled to target motion during a VOR x2
+ * trial.
+ *
+ * `scoreVOR(gaze, head)` alone cannot distinguish a patient who correctly
+ * opposed their head to the moving dot from one whose eye velocity happened
+ * to track their head velocity for an unrelated reason (head barely moving
+ * with matching tiny eye jitter, or head moving the wrong way) — both can
+ * produce a clean-looking "excellent" gain near 1.0 from unsigned magnitude
+ * alone, because `scoreVOR` only compares |eye velocity| to |head velocity|,
+ * never checking that the exercise's actual physiology — head opposing a
+ * moving target — occurred at all.
+ *
+ * @param targetSeries The moving dot's recorded position track.
+ * @param headSeries   Head yaw over the same window.
+ */
+export function validateVorX2Opposition(
+  targetSeries: PursuitTargetPoint[],
+  headSeries: Array<{ t: number; yaw: number }>,
+): VorX2Validation {
+  if (targetSeries.length < 8 || headSeries.length < 8) return VOR_X2_NONE;
+
+  const headVals: number[] = [];
+  const targetVals: number[] = [];
+
+  for (let i = 1; i < headSeries.length; i++) {
+    const dt = (headSeries[i].t - headSeries[i - 1].t) / 1000;
+    if (dt <= 0) continue;
+    const target = interpolateTargetXY(targetSeries, headSeries[i].t);
+    const prevTarget = interpolateTargetXY(targetSeries, headSeries[i - 1].t);
+    if (!target || !prevTarget) continue;
+
+    headVals.push((headSeries[i].yaw - headSeries[i - 1].yaw) / dt);
+    targetVals.push((target.x - prevTarget.x) / dt);
+  }
+
+  if (headVals.length < 8) return VOR_X2_NONE;
+
+  const r = pearson(headVals, targetVals);
+  return {
+    headTargetCorrelation: parseFloat(r.toFixed(2)),
+    oppositionValidated: Math.abs(r) >= VOR_X2_MIN_OPPOSITION_CORRELATION,
   };
 }
 
@@ -1820,6 +2050,10 @@ export function solve5PointCalibration(samples: CalibrationPointSample[]): Calib
 export class GazeStabilizer {
   private xFilter = new OneEuroFilter(1.0, 0.5, 1.0);
   private yFilter = new OneEuroFilter(1.0, 0.5, 1.0);
+  private leftXFilter = new OneEuroFilter(1.0, 0.5, 1.0);
+  private leftYFilter = new OneEuroFilter(1.0, 0.5, 1.0);
+  private rightXFilter = new OneEuroFilter(1.0, 0.5, 1.0);
+  private rightYFilter = new OneEuroFilter(1.0, 0.5, 1.0);
   private lastValidGaze: GazePoint | null = null;
   private calibration: CalibrationCoefficients | null = null;
 
@@ -1830,6 +2064,10 @@ export class GazeStabilizer {
   reset() {
     this.xFilter.reset();
     this.yFilter.reset();
+    this.leftXFilter.reset();
+    this.leftYFilter.reset();
+    this.rightXFilter.reset();
+    this.rightYFilter.reset();
     this.lastValidGaze = null;
   }
 
@@ -1874,18 +2112,52 @@ export class GazeStabilizer {
       }
     }
 
-    // 4. One Euro Temporal Smoothing
+    // 4. One Euro Temporal Smoothing across all eye channels
     const smoothedX = this.xFilter.filter(inputX, t);
     const smoothedY = this.yFilter.filter(inputY, t);
+    const smoothedLeftX = this.leftXFilter.filter(rawGaze.leftEyeX ?? inputX, t);
+    const smoothedLeftY = this.leftYFilter.filter(rawGaze.leftEyeY ?? inputY, t);
+    const smoothedRightX = this.rightXFilter.filter(rawGaze.rightEyeX ?? inputX, t);
+    const smoothedRightY = this.rightYFilter.filter(rawGaze.rightEyeY ?? inputY, t);
 
     const stabilized: GazePoint = {
       ...rawGaze,
       x: Math.min(Math.max(smoothedX, 0.02), 0.98),
       y: Math.min(Math.max(smoothedY, 0.02), 0.98),
+      leftEyeX: Math.min(Math.max(smoothedLeftX, 0.02), 0.98),
+      leftEyeY: Math.min(Math.max(smoothedLeftY, 0.02), 0.98),
+      rightEyeX: Math.min(Math.max(smoothedRightX, 0.02), 0.98),
+      rightEyeY: Math.min(Math.max(smoothedRightY, 0.02), 0.98),
     };
 
     this.lastValidGaze = stabilized;
     return stabilized;
   }
+
+  /**
+   * Dual Stream Processor:
+   * Returns displayGaze (smoothly interpolated for UI) and analyticsGaze (strict, uninterpolated for VNG math)
+   */
+  processDual(rawGaze: GazePoint): { displayGaze: GazePoint; analyticsGaze: GazePoint } {
+    const displayGaze = this.process(rawGaze);
+
+    // Analytics stream: Strict un-interpolated data. Blinks retain isBlink: true and low confidence.
+    const analyticsGaze: GazePoint = {
+      ...rawGaze,
+      x: rawGaze.isBlink ? (this.lastValidGaze?.x ?? rawGaze.x) : rawGaze.x,
+      y: rawGaze.isBlink ? (this.lastValidGaze?.y ?? rawGaze.y) : rawGaze.y,
+      hasIris: !rawGaze.isBlink && rawGaze.hasIris,
+      confidence: rawGaze.isBlink ? 0.0 : rawGaze.confidence ?? 0.9,
+    };
+
+    return { displayGaze, analyticsGaze };
+  }
 }
+
+/* =========================================================== Re-exports for Modular VNG Architecture */
+export * from './gaze-validity';
+export * from './gaze-calibration';
+export * from './gaze-binocular';
+export * from './vng-analytics';
+
 

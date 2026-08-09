@@ -1231,6 +1231,55 @@ export function saveSession(session: VestibularSession): VestibularSession[] {
   return next;
 }
 
+/* ------------------------------------------------------- backend telemetry sync */
+
+const SESSION_ENDPOINT = '/api/vestibular/session';
+
+/**
+ * Best-effort backend sync for a rep-counter session. `saveSession`
+ * (localStorage) remains this device's source of truth for its own UI — the
+ * exercise flow must never block or fail because a network call did — so this
+ * is fire-and-forget and swallows every error. No-ops outside the browser.
+ */
+export function syncSessionToBackend(patientId: string, session: VestibularSession): void {
+  if (typeof window === 'undefined') return;
+  fetch(SESSION_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ patientId, ...session }),
+  }).catch(() => {
+    // Best-effort — the session already persisted to localStorage.
+  });
+}
+
+/**
+ * This patient's rep-counter sessions from the backend, for cross-device
+ * longitudinal tracking. Returns `[]` on any failure so a caller can always
+ * fall back to `loadSessions()` alone.
+ */
+export async function fetchSessionsFromBackend(patientId: string): Promise<VestibularSession[]> {
+  try {
+    const res = await fetch(`${SESSION_ENDPOINT}?patientId=${encodeURIComponent(patientId)}`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data.sessions) ? (data.sessions as VestibularSession[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Merge backend and local sessions for one patient, de-duplicated by `id`.
+ * Local wins on conflict since it may include an in-progress edit the backend
+ * hasn't seen yet.
+ */
+export function mergeSessions(local: VestibularSession[], remote: VestibularSession[]): VestibularSession[] {
+  const byId = new Map<string, VestibularSession>();
+  for (const s of remote) byId.set(s.id, s);
+  for (const s of local) byId.set(s.id, s);
+  return [...byId.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
 export function loadDhiHistory(): DhiResult[] {
   return readJson<DhiResult[]>(STORAGE_KEYS.dhi, []);
 }

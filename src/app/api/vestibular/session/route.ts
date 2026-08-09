@@ -1,27 +1,38 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase-admin";
 
+const COLLECTION = "vestibular_sessions";
+
 /**
  * POST /api/vestibular/session
- * Record a completed vestibular exercise session via Server API
+ * Persist a completed rep-counter exercise session (VOR x1/x2, habituation,
+ * cervicogenic shrug — see `EXERCISES` in vestibular-rx.ts). Mirrors what
+ * `saveSession()` already writes to localStorage on-device; this is the
+ * cross-device / longitudinal copy.
  */
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { patientId, exerciseId, exerciseTitle, eyesClosed, durationCompletedSeconds, telemetry, safetyStatus } = body;
+    const { patientId, exerciseId } = body;
 
     if (!patientId || !exerciseId) {
       return NextResponse.json({ error: "Missing patientId or exerciseId" }, { status: 400 });
     }
 
-    const docRef = await adminDb.collection("vestibular_sessions").add({
+    const docRef = await adminDb.collection(COLLECTION).add({
       patientId,
+      prescriptionId: body.prescriptionId ?? null,
       exerciseId,
-      exerciseTitle: exerciseTitle || "Vestibular Exercise",
-      eyesClosed: Boolean(eyesClosed),
-      durationCompletedSeconds: durationCompletedSeconds || 0,
-      telemetry: telemetry || {},
-      safetyStatus: safetyStatus || "NORMAL",
+      exerciseTitle: body.exerciseTitle ?? null,
+      reps: Number(body.reps) || 0,
+      targetReps: Number(body.targetReps) || 0,
+      meanPeakAngle: Number(body.meanPeakAngle) || 0,
+      meanPeakVelocity: Number(body.meanPeakVelocity) || 0,
+      qualityScore: Number(body.qualityScore) || 0,
+      dizzinessBefore: Number(body.dizzinessBefore) || 0,
+      dizzinessAfter: Number(body.dizzinessAfter) || 0,
+      mode: body.mode === "manual" ? "manual" : "coach",
+      date: body.date || new Date().toISOString().slice(0, 10),
       timestamp: new Date(),
     });
 
@@ -34,7 +45,8 @@ export async function POST(req: NextRequest) {
 
 /**
  * GET /api/vestibular/session?patientId=xxx
- * Retrieve recent sessions for a patient
+ * Recent rep-counter sessions for a patient, most recent first — powers
+ * cross-device longitudinal adherence/quality trend tracking.
  */
 export async function GET(req: NextRequest) {
   try {
@@ -46,10 +58,10 @@ export async function GET(req: NextRequest) {
     }
 
     const snapshot = await adminDb
-      .collection("vestibular_sessions")
+      .collection(COLLECTION)
       .where("patientId", "==", patientId)
       .orderBy("timestamp", "desc")
-      .limit(20)
+      .limit(300)
       .get();
 
     const sessions = snapshot.docs.map((doc) => ({

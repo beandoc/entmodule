@@ -12,8 +12,10 @@ import { VertigoExerciseLibrary } from './VertigoExerciseLibrary';
 import {
   MANOEUVRES, renderInstruction, manoeuvreDuration,
   loadProfile, saveProfile, loadSessions, saveSession, summariseAdherence,
+  syncSessionToBackend, fetchSessionsFromBackend, mergeSessions,
   type Manoeuvre, type Side, type VestibularSession,
 } from '@/lib/vestibular-rx';
+import { getCurrentPatientId } from '@/lib/patient-context';
 
 type Tab = 'exercises' | 'coach' | 'manoeuvre' | 'balance' | 'assessment';
 
@@ -539,7 +541,11 @@ const BalanceDrills: React.FC = () => {
   hiRef.current = hi;
 
   useEffect(() => {
-    setAdherence(summariseAdherence(loadSessions()));
+    const local = loadSessions();
+    setAdherence(summariseAdherence(local));
+    fetchSessionsFromBackend(getCurrentPatientId()).then((remote) => {
+      if (remote.length > 0) setAdherence(summariseAdherence(mergeSessions(local, remote)));
+    });
   }, []);
 
   // Countdown. Only `running` drives it, so reaching zero cannot re-trigger itself.
@@ -614,6 +620,7 @@ const BalanceDrills: React.FC = () => {
     };
     setAdherence(summariseAdherence(saveSession(session)));
     setSaved(true);
+    syncSessionToBackend(getCurrentPatientId(), session);
   };
 
   const holdProgress = drill.seconds > 0 ? ((drill.seconds - remaining) / drill.seconds) * 100 : 0;

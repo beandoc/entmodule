@@ -32,9 +32,10 @@ import {
   computeAntiSaccadeErrorRate, generateInsight, scoreSmoothPursuit,
   loadGazeSessions, saveGazeSession, summariseGazeAdherence,
   solve5PointCalibration, GazeStabilizer,
+  computeOptokineticMetrics, oknTargetX, OKN_STIMULUS_DEG_PER_SEC,
   type GazePoint, type GazeAnalytics, type GazeSession,
   type VORScore, type Fixation, type Saccade, type NystagmusFlag,
-  type PursuitTargetPoint, type PursuitScore,
+  type PursuitTargetPoint, type PursuitScore, type OptokineticMetrics,
   type CalibrationCoefficients, type CalibrationPointSample,
 } from '@/lib/gaze-tracking';
 
@@ -127,11 +128,10 @@ function targetPositionAt(
       const positions = [0.15, 0.5, 0.85, 0.5];
       return { x: positions[stepIdx], y: 0.5 };
     }
-    case 'optokinetic': {
-      // Constant velocity sweep (20 deg/s simulation across screen)
-      const sweepX = (elapsedSec * 0.4) % 1.0;
-      return { x: sweepX, y: 0.5 };
-    }
+    case 'optokinetic':
+      // Speed and reversal schedule live with the OKN analysis so the stimulus
+      // the patient sees is the one gain is divided by.
+      return { x: oknTargetX(elapsedSec), y: 0.5 };
   }
 }
 
@@ -152,7 +152,10 @@ export const AIGazeAnalyticsEngine: React.FC = () => {
   const [isRecording, setIsRecording] = useState(false);
   const [liveData, setLiveData] = useState<LiveData>(EMPTY_LIVE);
   const [session, setSession] = useState<SessionData>(EMPTY_SESSION);
-  const [nystagmus, setNystagmus] = useState<NystagmusFlag>({ detected: false, frequencyHz: 0, direction: 'none', amplitude: 0 });
+  const [nystagmus, setNystagmus] = useState<NystagmusFlag>({
+    detected: false, frequencyHz: 0, direction: 'none', amplitude: 0,
+    slowPhaseVelocityDegPerSec: 0, fastPhaseDirection: 'none', beatsPerMinute: 0,
+  });
   const [liveVOR, setLiveVOR] = useState<VORScore | null>(null);
   const [historySessions, setHistorySessions] = useState<GazeSession[]>([]);
   const [isWizardOpen, setIsWizardOpen] = useState(false);
@@ -766,7 +769,9 @@ const LiveStudioTab: React.FC<{
                 {hi ? 'आँखों में अनैच्छिक कंपन' : 'Involuntary Eye Oscillation Detected'}
               </p>
               <p className="text-xs text-amber-300 mt-0.5">
-                {`${nystagmus.frequencyHz} Hz, ${nystagmus.direction} — `}
+                {`SPV ${nystagmus.slowPhaseVelocityDegPerSec.toFixed(1)}°/s`}
+                {nystagmus.fastPhaseDirection !== 'none' && `, ${nystagmus.fastPhaseDirection}-beating`}
+                {` · ${nystagmus.frequencyHz} Hz · ${Math.round(nystagmus.beatsPerMinute)} ${hi ? 'बीट/मिनट' : 'beats/min'} — `}
                 {hi ? 'कृपया इसे अपने चिकित्सक को बताएं।' : 'Please report this to your clinician.'}
               </p>
             </div>
@@ -809,7 +814,12 @@ const LiveStudioTab: React.FC<{
               <MiniMetric label={hi ? 'सिर गति' : 'Head vel.'} value={`${liveVOR.meanHeadVelocityDeg.toFixed(0)}°/s`} />
               <MiniMetric label={hi ? 'गेज़ गति' : 'Gaze vel.'} value={`${liveVOR.meanGazeVelocityDeg.toFixed(0)}°/s`} />
               <MiniMetric label={hi ? 'चक्र' : 'Cycles'} value={String(liveVOR.cycles)} />
-              <MiniMetric label={hi ? 'फेज़ त्रुटि' : 'Phase err.'} value={`${liveVOR.phaseErrorDeg.toFixed(0)}°`} />
+              <MiniMetric
+                label={hi ? 'फेज़ त्रुटि' : 'Phase err.'}
+                // The delay is the measurement; the angle is only defined once
+                // the head has completed a cycle to measure a frequency from.
+                value={liveVOR.phaseLagMs !== 0 ? `${liveVOR.phaseErrorDeg.toFixed(0)}° / ${liveVOR.phaseLagMs}ms` : '—'}
+              />
             </div>
           )}
         </div>
@@ -1864,6 +1874,8 @@ const RedDotPursuitTab: React.FC<{
   const [resultScore, setResultScore] = useState<PursuitScore | null>(null);
   /** Reflex gain, populated only for the VOR x2 pattern. */
   const [vorResult, setVorResult] = useState<VORScore | null>(null);
+  /** Slow phase velocities, populated only for the optokinetic pattern. */
+  const [oknResult, setOknResult] = useState<OptokineticMetrics | null>(null);
 
   // Eye Tracing Real-Time Waveform Samples
   const waveformBufferRef = useRef<EyeTracingPoint[]>([]);
@@ -2101,6 +2113,7 @@ const RedDotPursuitTab: React.FC<{
     testStartRef.current = performance.now();
     startTimeRef.current = performance.now();
     setResultScore(null);
+    setOknResult(null);
     setIsTesting(true);
     setTimeLeftSec(60);
 
@@ -2147,6 +2160,12 @@ const RedDotPursuitTab: React.FC<{
       pattern === 'vor-x2' && heads.length > 4 && gazes.length > 4
         ? scoreVOR(gazes, heads)
         : null,
+    );
+
+    // The optokinetic sweep induces a nystagmus by design, so the reportable
+    // numbers are its slow phase velocities rather than a pursuit gain.
+    setOknResult(
+      pattern === 'optokinetic' ? computeOptokineticMetrics(gazes, targets) : null,
     );
 
     // Immediately update waveform samples so eye tracing graph generates instantly
@@ -2537,6 +2556,42 @@ const RedDotPursuitTab: React.FC<{
                 <MiniMetric label={hi ? 'गुणवत्ता' : 'Quality'} value={resultScore.quality.toUpperCase()} />
               </div>
               <p className="text-xs text-slate-200 bg-white/5 p-2.5 rounded-xl border border-white/5">{resultScore.guidance}</p>
+
+              {/* The optokinetic sweep drives a nystagmus, so slow phase
+                  velocity each way — and the asymmetry between them — is what
+                  the test is actually for. */}
+              {oknResult && (
+                <div className="pt-3 border-t border-white/10 space-y-2">
+                  <h4 className="text-xs font-bold text-violet-300 uppercase tracking-widest">
+                    {hi ? 'ऑप्टोकाइनेटिक स्लो फेज़ वेलोसिटी' : 'Optokinetic Slow Phase Velocity'}
+                  </h4>
+                  {oknResult.slowPhaseVelocityRight === 0 && oknResult.slowPhaseVelocityLeft === 0 ? (
+                    <p className="text-xs text-amber-200 bg-amber-950/40 border border-amber-500/30 p-2.5 rounded-xl">
+                      {hi
+                        ? 'कोई ऑप्टोकाइनेटिक प्रतिक्रिया दर्ज नहीं हुई — सिर स्थिर रखें और बिंदु को आँखों से फॉलो करें।'
+                        : 'No optokinetic response recorded — keep the head still and let the eyes follow the sweep.'}
+                    </p>
+                  ) : (
+                    <>
+                      <div className="grid grid-cols-2 gap-2 text-center">
+                        <MiniMetric label={hi ? 'SPV दाएं' : 'SPV Right'} value={`${oknResult.slowPhaseVelocityRight.toFixed(1)}°/s`} />
+                        <MiniMetric label={hi ? 'SPV बाएं' : 'SPV Left'} value={`${oknResult.slowPhaseVelocityLeft.toFixed(1)}°/s`} />
+                        <MiniMetric label={hi ? 'गेन दाएं' : 'Gain Right'} value={oknResult.oknGainRight.toFixed(2)} />
+                        <MiniMetric label={hi ? 'गेन बाएं' : 'Gain Left'} value={oknResult.oknGainLeft.toFixed(2)} />
+                      </div>
+                      <div className={`text-xs p-2.5 rounded-xl border ${
+                        oknResult.asymmetryPercent > 15
+                          ? 'bg-amber-950/40 border-amber-500/30 text-amber-200'
+                          : 'bg-white/5 border-white/5 text-slate-200'
+                      }`}>
+                        {hi
+                          ? `दिशात्मक विषमता ${oknResult.asymmetryPercent}% (सामान्य < 15%) · उद्दीपक ${OKN_STIMULUS_DEG_PER_SEC}°/s`
+                          : `Directional asymmetry ${oknResult.asymmetryPercent}% (normal < 15%) · stimulus ${OKN_STIMULUS_DEG_PER_SEC}°/s`}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
 
               {/* VOR x2 turns the head against the target, so reflex gain is
                   the clinically meaningful number rather than pursuit gain. */}

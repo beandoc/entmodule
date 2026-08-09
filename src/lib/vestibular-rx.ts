@@ -177,25 +177,127 @@ export function mirrorPose(pose: HeadPose): HeadPose {
   return { yaw: -pose.yaw, pitch: pose.pitch, roll: -pose.roll };
 }
 
+/* ------------------------------------------------ one-euro head smoothing */
+
 /**
- * One-euro-style smoothing: heavier averaging when the head is still, almost
- * none when it is moving fast, so slow drift is suppressed without adding lag
- * to the quick head thrusts that VOR training depends on.
+ * One-Euro filter state for a single scalar signal — pure and threaded like
+ * every other state machine in this module (see `RepCounterState`): the caller
+ * owns the state and passes it back in each frame.
+ * Reference: Casiez, Roussel & Vogel, "1€ Filter", CHI 2012.
  */
-export function adaptiveSmooth(previous: number, next: number, minAlpha = 0.25, maxAlpha = 0.9): number {
-  const speed = Math.abs(next - previous);
-  const alpha = clamp(minAlpha + (speed / 25) * (maxAlpha - minAlpha), minAlpha, maxAlpha);
-  return previous + alpha * (next - previous);
+export interface OneEuroState {
+  value: number | null;
+  velocity: number;
+  lastAt: number | null;
 }
 
-export function smoothPose(previous: HeadPose | null, next: HeadPose): HeadPose {
-  if (!previous) return next;
+export function createOneEuroState(): OneEuroState {
+  return { value: null, velocity: 0, lastAt: null };
+}
+
+/**
+ * A tracking dropout longer than this resets the filter to the incoming
+ * sample rather than computing a velocity across the gap — otherwise a long
+ * pause (face lost, tab backgrounded) followed by a legitimate head turn would
+ * read as a single very-slow drift and get heavily over-smoothed.
+ */
+const ONE_EURO_MAX_GAP_MS = 300;
+
+export interface OneEuroStepResult {
+  value: number;
+  state: OneEuroState;
+}
+
+/**
+ * Advance a One-Euro filter by one sample.
+ *
+ * The cutoff frequency rises with signal speed: a head held still is damped
+ * heavily (killing landmark-noise tremor), while a fast VOR head thrust raises
+ * the cutoff enough to pass through with negligible lag — the property gaze-
+ * stabilisation training depends on. The velocity estimate that drives the
+ * cutoff is itself low-pass filtered (via `dCutoff`), which is what separates
+ * a real One-Euro filter from a plain speed-proportional blend: a single noisy
+ * sample cannot spike the cutoff and let a jitter frame straight through.
+ *
+ * All input is in degrees and milliseconds; the filter is frame-rate
+ * independent because every alpha is derived from the actual `dt`, not from an
+ * assumed frame interval.
+ */
+export function oneEuroStep(
+  state: OneEuroState,
+  x: number,
+  now: number,
+  minCutoff = 1.0,
+  beta = 0.3,
+  dCutoff = 1.0
+): OneEuroStepResult {
+  if (state.value === null || state.lastAt === null || now - state.lastAt > ONE_EURO_MAX_GAP_MS) {
+    return { value: x, state: { value: x, velocity: 0, lastAt: now } };
+  }
+
+  const dt = (now - state.lastAt) / 1000;
+  if (dt <= 0) return { value: state.value, state };
+
+  const rawVelocity = (x - state.value) / dt;
+  const velocity = euroLowPass(rawVelocity, state.velocity, euroAlpha(dt, dCutoff));
+
+  const cutoff = minCutoff + beta * Math.abs(velocity);
+  const value = euroLowPass(x, state.value, euroAlpha(dt, cutoff));
+
+  return { value, state: { value, velocity, lastAt: now } };
+}
+
+function euroAlpha(dt: number, cutoff: number): number {
+  const tau = 1 / (2 * Math.PI * cutoff);
+  return 1 / (1 + tau / dt);
+}
+
+function euroLowPass(x: number, xPrev: number, alpha: number): number {
+  return alpha * x + (1 - alpha) * xPrev;
+}
+
+export interface PoseSmoothingState {
+  yaw: OneEuroState;
+  pitch: OneEuroState;
+  roll: OneEuroState;
+}
+
+export function createPoseSmoothingState(): PoseSmoothingState {
+  return { yaw: createOneEuroState(), pitch: createOneEuroState(), roll: createOneEuroState() };
+}
+
+export interface PoseSmoothingResult {
+  pose: HeadPose;
+  state: PoseSmoothingState;
+}
+
+/**
+ * One-Euro-smooth all three head axes. `beta` is tuned lower than the gaze
+ * filter's (`GazeStabilizer` in gaze-tracking.ts uses 0.5 over [0,1]-normalised
+ * units): head angles run in tens of degrees rather than a unit square, so the
+ * same responsiveness needs a proportionally smaller velocity coefficient.
+ */
+export function smoothPose(
+  state: PoseSmoothingState,
+  next: HeadPose,
+  now: number
+): PoseSmoothingResult {
+  const yaw = oneEuroStep(state.yaw, next.yaw, now, HEAD_MIN_CUTOFF, HEAD_BETA);
+  const pitch = oneEuroStep(state.pitch, next.pitch, now, HEAD_MIN_CUTOFF, HEAD_BETA);
+  const roll = oneEuroStep(state.roll, next.roll, now, HEAD_MIN_CUTOFF, HEAD_BETA);
+
   return {
-    yaw: roundTo(adaptiveSmooth(previous.yaw, next.yaw), 1),
-    pitch: roundTo(adaptiveSmooth(previous.pitch, next.pitch), 1),
-    roll: roundTo(adaptiveSmooth(previous.roll, next.roll), 1),
+    pose: {
+      yaw: roundTo(yaw.value, 1),
+      pitch: roundTo(pitch.value, 1),
+      roll: roundTo(roll.value, 1),
+    },
+    state: { yaw: yaw.state, pitch: pitch.state, roll: roll.state },
   };
 }
+
+const HEAD_MIN_CUTOFF = 1.0;
+const HEAD_BETA = 0.3;
 
 /* ------------------------------------------------- repetition state machine */
 
@@ -275,6 +377,16 @@ export interface RepStepResult {
  * patient who simply holds their head turned from racking up reps, and the
  * separate peak and neutral thresholds give the hysteresis that a single
  * threshold lacks.
+ *
+ * Scope: this drives the camera-tracked drills in `EXERCISES` below (VOR x1/x2,
+ * the habituation and cervicogenic exercises) — sessions where the patient sits
+ * upright, facing the camera, moving through an angle small enough that their
+ * face stays in frame throughout. It does NOT drive the Epley or Brandt-Daroff
+ * canal-repositioning manoeuvres further down this file: those put the patient
+ * supine with the head hanging off the bed, turned away from any camera for
+ * most of the sequence, so there is no reliable pose signal to hysteresis-gate.
+ * `EPLEY` and `BRANDT_DAROFF` are deliberately a fixed-duration step sequence
+ * (see `ManoeuvreStep.seconds`) rather than motion-tracked reps.
  *
  * Pure: the caller owns the state.
  */

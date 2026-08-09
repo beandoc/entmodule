@@ -109,10 +109,17 @@ export interface VORScore {
    */
   gain: number;
   /**
-   * Phase error in degrees. Healthy VOR: ~0° (eye opposes head exactly).
-   * Large phase lag → delayed VOR.
+   * Phase error in degrees of the head-motion cycle. Healthy VOR: ~0° (eye
+   * opposes head exactly). Large phase lag → delayed VOR. Zero when the head
+   * did not oscillate enough for a cycle frequency to be measured.
    */
   phaseErrorDeg: number;
+  /**
+   * Raw eye-behind-head delay in milliseconds — the measurement `phaseErrorDeg`
+   * is derived from. Positive means the eye lags the head. Zero when the
+   * cross-correlation found no reliable alignment.
+   */
+  phaseLagMs: number;
   /** Number of head-turn cycles used for the estimate. */
   cycles: number;
   /** Mean peak head velocity (°/s). */
@@ -130,10 +137,22 @@ export interface NystagmusFlag {
   detected: boolean;
   /** Estimated oscillation frequency in Hz (0 if not detected). */
   frequencyHz: number;
-  /** Direction of fast phase ('horizontal' | 'vertical' | 'rotary' | 'none'). */
+  /** Plane of the oscillation ('horizontal' | 'vertical' | 'rotary' | 'none'). */
   direction: 'horizontal' | 'vertical' | 'rotary' | 'none';
   /** Amplitude of oscillation in normalised screen units. */
   amplitude: number;
+  /**
+   * Slow Phase Velocity in deg/s — the number VNG reports and the one that
+   * grades severity. Measured by least-squares fit over each drift phase.
+   */
+  slowPhaseVelocityDegPerSec: number;
+  /**
+   * Beat direction, named after the *fast* phase as clinicians do: a slow drift
+   * to the right with a fast flick left is "left-beating".
+   */
+  fastPhaseDirection: 'left' | 'right' | 'up' | 'down' | 'none';
+  /** Beat rate — one slow phase plus its corrective flick counts as one beat. */
+  beatsPerMinute: number;
 }
 
 export interface SaccadeMetrics {
@@ -195,7 +214,7 @@ export interface GazeSession {
  * distance (60 cm, 27" monitor). Used to convert pixel velocity → °/s.
  * This is a reasonable default for seated patient setups.
  */
-const DEG_PER_UNIT = 30;
+export const DEG_PER_UNIT = 30;
 
 /** I-DT fixation detection: maximum dispersion for a fixation window. */
 const FIXATION_DISPERSION_DEG = 1.5;
@@ -234,6 +253,13 @@ const NYSTAGMUS_MIN_ASYMMETRY = 2.0;
  * actively rotating, so compensatory eye motion is VOR rather than nystagmus.
  */
 const NYSTAGMUS_MAX_HEAD_VELOCITY = 15.0;
+/**
+ * Nystagmus heuristic: minimum slow phase velocity to flag (deg/s). VNG
+ * convention treats spontaneous nystagmus below roughly 2 deg/s as clinically
+ * insignificant, and requiring a measurable drift also suppresses the flag when
+ * the beat structure is too degraded for an SPV fit to succeed.
+ */
+const NYSTAGMUS_MIN_SPV = 2.0;
 
 /**
  * Compute Eye Aspect Ratio (EAR) for blink detection.
@@ -546,7 +572,7 @@ export function scoreVOR(
   headSeries: Array<{ t: number; yaw: number }>,
 ): VORScore {
   if (gazeSeries.length < 4 || headSeries.length < 4) {
-    return { gain: 0, phaseErrorDeg: 0, cycles: 0, meanHeadVelocityDeg: 0, meanGazeVelocityDeg: 0, label: 'fair' };
+    return { gain: 0, phaseErrorDeg: 0, phaseLagMs: 0, cycles: 0, meanHeadVelocityDeg: 0, meanGazeVelocityDeg: 0, label: 'fair' };
   }
 
   // Compute head velocity series (°/s)
@@ -569,7 +595,7 @@ export function scoreVOR(
   }
 
   if (headVelocities.length === 0 || gazeVelocities.length === 0) {
-    return { gain: 0, phaseErrorDeg: 0, cycles: 0, meanHeadVelocityDeg: 0, meanGazeVelocityDeg: 0, label: 'fair' };
+    return { gain: 0, phaseErrorDeg: 0, phaseLagMs: 0, cycles: 0, meanHeadVelocityDeg: 0, meanGazeVelocityDeg: 0, label: 'fair' };
   }
 
   const meanHeadV = headVelocities.reduce((s, v) => s + v, 0) / headVelocities.length;
@@ -586,12 +612,19 @@ export function scoreVOR(
     gain >= 0.7 ? 'good' :
     gain >= 0.5 ? 'fair' : 'impaired';
 
-  const phaseErrorDeg = estimatePhaseError(gazeSeries, headSeries);
   const cycles = countHeadCycles(headSeries);
+  const phaseLagMs = estimatePhaseLagMs(gazeSeries, headSeries);
+
+  // A delay only becomes a phase angle once you know how fast the head was
+  // cycling: 20 ms is a tenth of a cycle at 5 Hz and a hundredth at 0.5 Hz.
+  // Without a completed cycle there is no frequency, so no angle to report.
+  const freqHz = headFrequencyHz(headSeries, cycles);
+  const phaseErrorDeg = freqHz > 0 ? (phaseLagMs / 1000) * freqHz * 360 : 0;
 
   return {
     gain: parseFloat(gain.toFixed(3)),
     phaseErrorDeg: parseFloat(phaseErrorDeg.toFixed(1)),
+    phaseLagMs,
     cycles,
     meanHeadVelocityDeg: parseFloat(meanHeadV.toFixed(1)),
     meanGazeVelocityDeg: parseFloat(meanGazeV.toFixed(1)),
@@ -612,39 +645,103 @@ function countHeadCycles(headSeries: Array<{ t: number; yaw: number }>): number 
   return Math.floor(reversals / 2);
 }
 
-function estimatePhaseError(
+/**
+ * Widest eye-behind-head delay the search will consider (ms). Kept well inside
+ * a half-period of the slowest head motion we score, so the correlation peak
+ * cannot alias onto the opposite half of the cycle.
+ */
+const PHASE_SEARCH_MS = 150;
+/** Resolution of the delay search (ms). */
+const PHASE_STEP_MS = 5;
+/**
+ * Minimum |Pearson r| between head and eye before a delay is believed. Below
+ * this the two signals are unrelated — usually a head that barely moved — and
+ * reporting the argmin of noise would be inventing a measurement.
+ */
+const PHASE_MIN_CORRELATION = 0.3;
+
+/**
+ * Eye-behind-head delay, in milliseconds, from a normalised cross-correlation.
+ *
+ * The VOR drives the eye *opposite* the head, so head yaw and gaze position
+ * anti-correlate; the delay we want is the shift that makes that anti-correlation
+ * strongest. Both series are de-meaned over the window before correlating, so a
+ * patient whose calibrated centre is not exactly 0.5, or who sits with a resting
+ * head offset, does not bias the result.
+ *
+ * Returns 0 when the correlation never gets strong enough to be trusted.
+ */
+function estimatePhaseLagMs(
   gazeSeries: GazePoint[],
   headSeries: Array<{ t: number; yaw: number }>,
 ): number {
-  // Very lightweight cross-correlation: shift gaze by ±50 ms windows
-  // and find the shift that maximises anti-correlation (eye opposing head).
-  const SHIFTS = [-50, -40, -30, -20, -10, 0, 10, 20, 30, 40, 50];
-  let bestShift = 0;
-  let bestCorr = -Infinity;
+  if (gazeSeries.length < 8 || headSeries.length < 8) return 0;
 
-  for (const shift of SHIFTS) {
-    let corr = 0;
-    let n = 0;
+  const firstGazeT = gazeSeries[0].t;
+  const lastGazeT = gazeSeries[gazeSeries.length - 1].t;
+
+  let bestShift = 0;
+  // Most negative r wins: the eye opposing the head is the signal we are timing.
+  let bestCorr = Infinity;
+
+  for (let shift = -PHASE_SEARCH_MS; shift <= PHASE_SEARCH_MS; shift += PHASE_STEP_MS) {
+    const headVals: number[] = [];
+    const gazeVals: number[] = [];
+
     for (let i = 0; i < headSeries.length; i++) {
       const t = headSeries[i].t + shift;
+      // Outside the recorded gaze window `interpolateGaze` clamps to an
+      // endpoint, which would pad the correlation with a constant.
+      if (t < firstGazeT || t > lastGazeT) continue;
       const g = interpolateGaze(gazeSeries, t);
       if (!g) continue;
-      // VOR: gaze should oppose head yaw, so gaze.x should anti-correlate with head.yaw
-      const headNorm = headSeries[i].yaw / 80; // normalised
-      const gazeNorm = (g.x - 0.5) * 2;        // centred on 0
-      corr += headNorm * gazeNorm;
-      n++;
+      headVals.push(headSeries[i].yaw);
+      gazeVals.push(g.x);
     }
-    if (n > 0) {
-      const meanCorr = corr / n;
-      if (meanCorr < bestCorr) {
-        bestCorr = meanCorr;
-        bestShift = shift;
-      }
+
+    if (headVals.length < 8) continue;
+
+    const r = pearson(headVals, gazeVals);
+    if (r < bestCorr) {
+      bestCorr = r;
+      bestShift = shift;
     }
   }
-  // Convert ms lag to approximate degrees (at 1 Hz head motion, 1 ms ≈ 0.36°)
-  return bestShift * 0.36;
+
+  if (!Number.isFinite(bestCorr) || Math.abs(bestCorr) < PHASE_MIN_CORRELATION) return 0;
+  return bestShift;
+}
+
+/** Pearson correlation. Returns 0 when either series is flat. */
+function pearson(a: number[], b: number[]): number {
+  const n = Math.min(a.length, b.length);
+  if (n < 2) return 0;
+
+  let meanA = 0, meanB = 0;
+  for (let i = 0; i < n; i++) { meanA += a[i]; meanB += b[i]; }
+  meanA /= n; meanB /= n;
+
+  let cov = 0, varA = 0, varB = 0;
+  for (let i = 0; i < n; i++) {
+    const da = a[i] - meanA;
+    const db = b[i] - meanB;
+    cov += da * db;
+    varA += da * da;
+    varB += db * db;
+  }
+
+  const denom = Math.sqrt(varA * varB);
+  return denom > 1e-12 ? cov / denom : 0;
+}
+
+/**
+ * Dominant head oscillation frequency (Hz), from completed cycles over the
+ * recorded duration. Returns 0 when the head never completed a cycle.
+ */
+function headFrequencyHz(headSeries: Array<{ t: number; yaw: number }>, cycles: number): number {
+  if (cycles <= 0 || headSeries.length < 2) return 0;
+  const durationSec = (headSeries[headSeries.length - 1].t - headSeries[0].t) / 1000;
+  return durationSec > 0 ? cycles / durationSec : 0;
 }
 
 function interpolateGaze(gazeSeries: GazePoint[], t: number): GazePoint | null {
@@ -665,6 +762,276 @@ function interpolateGaze(gazeSeries: GazePoint[], t: number): GazePoint | null {
   return null;
 }
 
+/* =========================================================== slow phase velocity */
+
+/** One drift phase, between the fast flicks that bracket it. */
+export interface SlowPhaseSegment {
+  startT: number;
+  endT: number;
+  durationMs: number;
+  /**
+   * Least-squares drift velocity along the analysed axis, deg/s. Signed from
+   * the patient's point of view: positive is rightward (horizontal axis) or
+   * downward (vertical axis).
+   */
+  velocityDegPerSec: number;
+  samples: number;
+}
+
+export interface SlowPhaseAnalysis {
+  axis: 'horizontal' | 'vertical';
+  /** Median |drift velocity| across accepted beats — the VNG "SPV", deg/s. */
+  spvDegPerSec: number;
+  /** The same figure, signed by drift direction. */
+  signedSpvDegPerSec: number;
+  /** Named after the fast phase, as clinical convention requires. */
+  fastPhaseDirection: 'left' | 'right' | 'up' | 'down' | 'none';
+  /** Accepted slow phases — one per beat. */
+  beats: number;
+  beatsPerMinute: number;
+  segments: SlowPhaseSegment[];
+}
+
+/** Absolute floor for the fast-phase velocity threshold (deg/s). */
+const FAST_PHASE_MIN_DEG_PER_SEC = 20;
+/** A fast phase must also outrun the local median sample velocity by this factor. */
+const FAST_PHASE_MEDIAN_MULTIPLE = 3;
+/**
+ * Width of the window the fast-phase threshold adapts over (ms).
+ *
+ * The threshold has to be local, not global. A recording where the response is
+ * brisk one way and weak the other — precisely the asymmetry an optokinetic or
+ * positional test is looking for — has one median for the strong stretch and a
+ * much lower one for the weak stretch. A single threshold sized on the whole
+ * recording sits above the weak side's flicks entirely, merges its beats into
+ * one long "drift", and reports the weak side as no response at all.
+ */
+const FAST_PHASE_WINDOW_MS = 2000;
+/** How often the local threshold is recomputed as the window slides (ms). */
+const FAST_PHASE_RECOMPUTE_MS = 250;
+/** A drift shorter than this is not a scorable slow phase (ms). */
+const SLOW_PHASE_MIN_DURATION_MS = 60;
+/** Fewest samples that make a least-squares slope worth trusting. */
+const SLOW_PHASE_MIN_SAMPLES = 3;
+/** A "drift" faster than this was a mis-classified fast phase (deg/s). */
+const SLOW_PHASE_MAX_DEG_PER_SEC = 100;
+
+const EMPTY_SLOW_PHASE: SlowPhaseAnalysis = {
+  axis: 'horizontal',
+  spvDegPerSec: 0,
+  signedSpvDegPerSec: 0,
+  fastPhaseDirection: 'none',
+  beats: 0,
+  beatsPerMinute: 0,
+  segments: [],
+};
+
+/**
+ * Slow Phase Velocity — the measurement clinical VNG grades nystagmus by.
+ *
+ * Nystagmus is a sawtooth: a slow vestibular drift followed by a fast corrective
+ * flick. Only the drift reflects vestibular tone, so SPV is measured on the slow
+ * phases alone and the flicks must first be cut out.
+ *
+ * The split is velocity-thresholded, with the threshold adapting to the signal:
+ * a fast phase must clear both an absolute floor and a multiple of the median
+ * sample velocity, so a small-amplitude nystagmus is still segmented correctly
+ * instead of being swallowed whole by a fixed threshold sized for a large one.
+ *
+ * Each surviving drift is fitted by least squares rather than differenced
+ * end-to-end, so landmark jitter on either endpoint does not set the velocity of
+ * the whole phase. The reported SPV is the median across beats — one blink-
+ * corrupted phase cannot drag the session figure the way a mean would.
+ *
+ * @param gazeHistory Gaze samples for the window under test.
+ * @param axisHint    Force the analysis axis; otherwise the axis carrying the
+ *                    larger excursion is chosen.
+ */
+export function computeSlowPhaseVelocity(
+  gazeHistory: GazePoint[],
+  axisHint?: 'horizontal' | 'vertical',
+): SlowPhaseAnalysis {
+  if (gazeHistory.length < 8) return { ...EMPTY_SLOW_PHASE, axis: axisHint ?? 'horizontal' };
+
+  const xs = gazeHistory.map(p => p.x);
+  const ys = gazeHistory.map(p => p.y);
+  const meanX = xs.reduce((s, v) => s + v, 0) / xs.length;
+  const meanY = ys.reduce((s, v) => s + v, 0) / ys.length;
+
+  const axis: SlowPhaseAnalysis['axis'] =
+    axisHint ?? (rms(xs.map(v => v - meanX)) >= rms(ys.map(v => v - meanY)) ? 'horizontal' : 'vertical');
+
+  // Positions in degrees of visual angle, so every velocity below is deg/s.
+  const pos = (axis === 'horizontal' ? xs : ys).map(v => v * DEG_PER_UNIT);
+
+  // Inter-sample velocity. `null` marks a tracking dropout, which must break a
+  // phase rather than contribute an unmeasured jump to it.
+  const velocity: Array<number | null> = [null];
+  for (let i = 1; i < gazeHistory.length; i++) {
+    const gapMs = gazeHistory[i].t - gazeHistory[i - 1].t;
+    if (gapMs <= 0 || gapMs > MAX_SAMPLE_GAP_MS) { velocity.push(null); continue; }
+    velocity.push((pos[i] - pos[i - 1]) / (gapMs / 1000));
+  }
+
+  if (velocity.filter(v => v !== null).length < 4) return { ...EMPTY_SLOW_PHASE, axis };
+
+  const thresholds = fastPhaseThresholds(gazeHistory, velocity);
+
+  const segments: SlowPhaseSegment[] = [];
+  /** Net displacement of each fast phase, for naming the beat direction. */
+  const fastDisplacements: number[] = [];
+
+  let slowStart: number | null = null;
+  let fastStart: number | null = null;
+
+  const closeSlow = (endIdx: number) => {
+    if (slowStart === null) return;
+    const seg = fitSlowPhase(gazeHistory, pos, slowStart, endIdx);
+    if (seg) segments.push(seg);
+    slowStart = null;
+  };
+  const closeFast = (endIdx: number) => {
+    if (fastStart === null) return;
+    if (endIdx > fastStart) fastDisplacements.push(pos[endIdx] - pos[fastStart]);
+    fastStart = null;
+  };
+
+  for (let i = 1; i < pos.length; i++) {
+    const v = velocity[i];
+    if (v === null) {
+      // The dropout ends whichever phase was running; neither may span it.
+      closeSlow(i - 1);
+      closeFast(i - 1);
+      continue;
+    }
+    if (Math.abs(v) > thresholds[i]) {
+      closeSlow(i - 1);
+      if (fastStart === null) fastStart = i - 1;
+    } else {
+      closeFast(i - 1);
+      if (slowStart === null) slowStart = i - 1;
+    }
+  }
+  closeSlow(pos.length - 1);
+  closeFast(pos.length - 1);
+
+  if (segments.length === 0) return { ...EMPTY_SLOW_PHASE, axis };
+
+  const signedSpv = median(segments.map(s => s.velocityDegPerSec));
+  const durationSec = (gazeHistory[gazeHistory.length - 1].t - gazeHistory[0].t) / 1000;
+
+  // The fast phase runs opposite the drift; measure it where we can and infer
+  // it from the drift when every flick fell inside a dropout.
+  const netFast = fastDisplacements.reduce((s, v) => s + v, 0);
+  const dirSign = netFast !== 0 ? Math.sign(netFast) : -Math.sign(signedSpv);
+
+  const fastPhaseDirection: SlowPhaseAnalysis['fastPhaseDirection'] =
+    dirSign === 0 ? 'none'
+      : axis === 'horizontal' ? (dirSign > 0 ? 'right' : 'left')
+      : (dirSign > 0 ? 'down' : 'up');
+
+  return {
+    axis,
+    spvDegPerSec: parseFloat(Math.abs(signedSpv).toFixed(2)),
+    signedSpvDegPerSec: parseFloat(signedSpv.toFixed(2)),
+    fastPhaseDirection,
+    beats: segments.length,
+    beatsPerMinute: durationSec > 0 ? parseFloat((segments.length / (durationSec / 60)).toFixed(1)) : 0,
+    segments,
+  };
+}
+
+/**
+ * Per-sample fast-phase velocity threshold, adapting to the local median speed.
+ *
+ * The window slides monotonically and the median is refreshed on a coarser
+ * stride than the sample rate, so a long recording stays linear rather than
+ * re-sorting a full window on every frame.
+ */
+function fastPhaseThresholds(
+  samples: GazePoint[],
+  velocity: Array<number | null>,
+): number[] {
+  const n = velocity.length;
+  const thresholds = new Array<number>(n).fill(FAST_PHASE_MIN_DEG_PER_SEC);
+
+  let lo = 0;
+  let hi = 0;
+  let current = FAST_PHASE_MIN_DEG_PER_SEC;
+  let computedAt = -Infinity;
+
+  for (let i = 0; i < n; i++) {
+    const t = samples[i].t;
+
+    if (t - computedAt >= FAST_PHASE_RECOMPUTE_MS) {
+      const half = FAST_PHASE_WINDOW_MS / 2;
+      while (lo < n && samples[lo].t < t - half) lo++;
+      while (hi < n && samples[hi].t <= t + half) hi++;
+
+      const local: number[] = [];
+      for (let j = lo; j < hi; j++) {
+        const v = velocity[j];
+        if (v !== null) local.push(Math.abs(v));
+      }
+
+      current = local.length >= 4
+        ? Math.max(FAST_PHASE_MIN_DEG_PER_SEC, FAST_PHASE_MEDIAN_MULTIPLE * median(local))
+        : FAST_PHASE_MIN_DEG_PER_SEC;
+      computedAt = t;
+    }
+
+    thresholds[i] = current;
+  }
+
+  return thresholds;
+}
+
+/** Least-squares fit of one drift phase. Returns null if it is not scorable. */
+function fitSlowPhase(
+  samples: GazePoint[],
+  pos: number[],
+  startIdx: number,
+  endIdx: number,
+): SlowPhaseSegment | null {
+  const n = endIdx - startIdx + 1;
+  if (n < SLOW_PHASE_MIN_SAMPLES) return null;
+
+  const startT = samples[startIdx].t;
+  const endT = samples[endIdx].t;
+  const durationMs = endT - startT;
+  if (durationMs < SLOW_PHASE_MIN_DURATION_MS) return null;
+
+  let sumT = 0, sumP = 0, sumTT = 0, sumTP = 0;
+  for (let i = startIdx; i <= endIdx; i++) {
+    const t = (samples[i].t - startT) / 1000;
+    sumT += t;
+    sumP += pos[i];
+    sumTT += t * t;
+    sumTP += t * pos[i];
+  }
+
+  const denom = n * sumTT - sumT * sumT;
+  if (Math.abs(denom) < 1e-12) return null;
+
+  const slope = (n * sumTP - sumT * sumP) / denom;
+  if (!Number.isFinite(slope) || Math.abs(slope) > SLOW_PHASE_MAX_DEG_PER_SEC) return null;
+
+  return {
+    startT,
+    endT,
+    durationMs,
+    velocityDegPerSec: parseFloat(slope.toFixed(2)),
+    samples: n,
+  };
+}
+
+function median(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+}
+
 /* =========================================================== nystagmus heuristic */
 
 /**
@@ -677,12 +1044,16 @@ function interpolateGaze(gazeSeries: GazePoint[], t: number): GazePoint | null {
  * same 1–3 Hz band and would otherwise trip a pure amplitude + rate test,
  * telling a patient doing their exercises correctly to go see a clinician.
  *
- * The flag therefore requires all four of:
+ * The flag therefore requires all five of:
  *   1. Oscillation amplitude above the noise floor.
  *   2. Frequency inside the physiological 1–6 Hz nystagmus band.
  *   3. Slow-phase / fast-phase velocity asymmetry (the sawtooth signature).
  *   4. A head that is not actively rotating — gaze oscillation during a head
  *      turn is the VOR working, not nystagmus.
+ *   5. A measurable slow phase velocity at or above the clinical floor.
+ *
+ * A positive flag carries its SPV, beat direction and beat rate, so the report
+ * says *how much* nystagmus rather than merely that some was seen.
  *
  * NOT a clinical diagnostic — a positive flag should prompt clinician review.
  *
@@ -694,7 +1065,15 @@ export function detectNystagmusHeuristic(
   gazeHistory: GazePoint[],
   headSeries?: Array<{ t: number; yaw: number }>,
 ): NystagmusFlag {
-  const NONE: NystagmusFlag = { detected: false, frequencyHz: 0, direction: 'none', amplitude: 0 };
+  const NONE: NystagmusFlag = {
+    detected: false,
+    frequencyHz: 0,
+    direction: 'none',
+    amplitude: 0,
+    slowPhaseVelocityDegPerSec: 0,
+    fastPhaseDirection: 'none',
+    beatsPerMinute: 0,
+  };
 
   if (gazeHistory.length < 20) return NONE;
 
@@ -740,11 +1119,19 @@ export function detectNystagmusHeuristic(
   // Sawtooth test: real nystagmus flicks back far faster than it drifts out.
   if (slowFastAsymmetry(dominant, gazeHistory) < NYSTAGMUS_MIN_ASYMMETRY) return NONE;
 
+  // Quantify the drift. A waveform whose slow phases cannot be fitted, or whose
+  // drift sits below the clinical floor, is not worth alarming a patient over.
+  const slowPhase = computeSlowPhaseVelocity(gazeHistory, direction);
+  if (slowPhase.spvDegPerSec < NYSTAGMUS_MIN_SPV) return NONE;
+
   return {
     detected: true,
     frequencyHz: parseFloat(frequencyHz.toFixed(2)),
     direction,
     amplitude: parseFloat(amplitude.toFixed(4)),
+    slowPhaseVelocityDegPerSec: slowPhase.spvDegPerSec,
+    fastPhaseDirection: slowPhase.fastPhaseDirection,
+    beatsPerMinute: slowPhase.beatsPerMinute,
   };
 }
 
@@ -1178,6 +1565,139 @@ export function scoreSmoothPursuit(
     quality,
     guidance,
   };
+}
+
+/* =========================================================== optokinetic (OKN) */
+
+/** Stimulus speed the optokinetic drum is simulated at (deg/s). */
+export const OKN_STIMULUS_DEG_PER_SEC = 20;
+/** How long the sweep runs one way before reversing, so both sides are tested (s). */
+export const OKN_DIRECTION_PERIOD_SEC = 15;
+/**
+ * A single-frame target displacement larger than this is the sweep re-entering
+ * from the opposite edge, not stimulus motion, and is excluded from the
+ * stimulus velocity estimate.
+ */
+const OKN_WRAP_JUMP = 0.5;
+
+/**
+ * Horizontal position of the optokinetic target at a given elapsed time,
+ * normalised to [0,1].
+ *
+ * A constant-velocity sweep that re-enters from the far edge stands in for the
+ * repeating stripes of an optokinetic drum. Speed is derived from
+ * `OKN_STIMULUS_DEG_PER_SEC` rather than hard-coded, so the stimulus the patient
+ * sees and the gain the analysis divides by cannot drift apart. The direction
+ * reverses every `OKN_DIRECTION_PERIOD_SEC` because asymmetry between the two
+ * directions — not either one alone — is the clinically meaningful number.
+ */
+export function oknTargetX(elapsedSec: number): number {
+  const unitsPerSec = OKN_STIMULUS_DEG_PER_SEC / DEG_PER_UNIT;
+  const rightward = Math.floor(elapsedSec / OKN_DIRECTION_PERIOD_SEC) % 2 === 0;
+  const sweep = (elapsedSec * unitsPerSec) % 1;
+  return rightward ? sweep : 1 - sweep;
+}
+
+const EMPTY_OKN: OptokineticMetrics = {
+  slowPhaseVelocityRight: 0,
+  slowPhaseVelocityLeft: 0,
+  oknGainRight: 0,
+  oknGainLeft: 0,
+  asymmetryPercent: 0,
+};
+
+/**
+ * Optokinetic nystagmus metrics: slow phase velocity each way, gain against the
+ * stimulus, and the directional asymmetry between them.
+ *
+ * OKN is a nystagmus the stimulus *induces*: the eye follows the sweep (slow
+ * phase) then flicks back (fast phase). So the same slow-phase machinery scores
+ * it, sorted by which way the drum was turning at the time. Stimulus velocity is
+ * measured from the recorded target track rather than assumed, so a dropped
+ * frame or a throttled render loop shows up as a slower stimulus instead of
+ * silently deflating gain.
+ *
+ * Drifts running against the stimulus are excluded — those are spontaneous or
+ * corrective eye movements, and counting them would inflate SPV with motion the
+ * drum did not drive.
+ */
+export function computeOptokineticMetrics(
+  gazeHistory: GazePoint[],
+  targetSeries: PursuitTargetPoint[],
+): OptokineticMetrics {
+  if (targetSeries.length < 4) return EMPTY_OKN;
+
+  const analysis = computeSlowPhaseVelocity(gazeHistory, 'horizontal');
+  if (analysis.segments.length === 0) return EMPTY_OKN;
+
+  // Stimulus velocity track (deg/s), excluding wraps and recording gaps.
+  const stimulus: Array<{ t: number; v: number }> = [];
+  for (let i = 1; i < targetSeries.length; i++) {
+    const gapMs = targetSeries[i].t - targetSeries[i - 1].t;
+    if (gapMs <= 0 || gapMs > MAX_SAMPLE_GAP_MS) continue;
+    const dx = targetSeries[i].x - targetSeries[i - 1].x;
+    if (Math.abs(dx) > OKN_WRAP_JUMP) continue;
+    stimulus.push({
+      t: (targetSeries[i].t + targetSeries[i - 1].t) / 2,
+      v: (dx / (gapMs / 1000)) * DEG_PER_UNIT,
+    });
+  }
+  if (stimulus.length === 0) return EMPTY_OKN;
+
+  const rightSpv: number[] = [];
+  const leftSpv: number[] = [];
+  const rightStim: number[] = [];
+  const leftStim: number[] = [];
+
+  for (const seg of analysis.segments) {
+    const stimV = stimulusVelocityAt(stimulus, (seg.startT + seg.endT) / 2);
+    // Around a reversal the stimulus is momentarily near zero; nothing to score.
+    if (stimV === null || Math.abs(stimV) < 1) continue;
+    if (Math.sign(seg.velocityDegPerSec) !== Math.sign(stimV)) continue;
+
+    if (stimV > 0) {
+      rightSpv.push(Math.abs(seg.velocityDegPerSec));
+      rightStim.push(Math.abs(stimV));
+    } else {
+      leftSpv.push(Math.abs(seg.velocityDegPerSec));
+      leftStim.push(Math.abs(stimV));
+    }
+  }
+
+  const spvRight = median(rightSpv);
+  const spvLeft = median(leftSpv);
+  const stimRight = rightStim.length > 0 ? median(rightStim) : OKN_STIMULUS_DEG_PER_SEC;
+  const stimLeft = leftStim.length > 0 ? median(leftStim) : OKN_STIMULUS_DEG_PER_SEC;
+
+  // Asymmetry is only meaningful once both directions were actually tested.
+  const bothTested = rightSpv.length > 0 && leftSpv.length > 0;
+  const total = spvRight + spvLeft;
+
+  return {
+    slowPhaseVelocityRight: parseFloat(spvRight.toFixed(2)),
+    slowPhaseVelocityLeft: parseFloat(spvLeft.toFixed(2)),
+    oknGainRight: stimRight > 0 ? parseFloat((spvRight / stimRight).toFixed(2)) : 0,
+    oknGainLeft: stimLeft > 0 ? parseFloat((spvLeft / stimLeft).toFixed(2)) : 0,
+    asymmetryPercent:
+      bothTested && total > 0 ? parseFloat(((Math.abs(spvRight - spvLeft) / total) * 100).toFixed(1)) : 0,
+  };
+}
+
+/** Stimulus velocity nearest a given instant, or null when the track is empty. */
+function stimulusVelocityAt(stimulus: Array<{ t: number; v: number }>, t: number): number | null {
+  if (stimulus.length === 0) return null;
+
+  let lo = 0;
+  let hi = stimulus.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (stimulus[mid].t < t) lo = mid + 1;
+    else hi = mid;
+  }
+
+  const after = stimulus[lo];
+  const before = lo > 0 ? stimulus[lo - 1] : after;
+  return Math.abs(after.t - t) <= Math.abs(t - before.t) ? after.v : before.v;
 }
 
 /* =========================================================== One Euro Filter */

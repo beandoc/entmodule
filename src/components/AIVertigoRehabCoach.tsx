@@ -11,11 +11,13 @@ import { useAppData } from '@/lib/app-data-context';
 import {
   EXERCISES, exerciseById, repConfigFor, createRepState, stepRepCounter,
   scoreSession, coachingCue, relativePose, smoothPose, clamp,
+  createPoseSmoothingState,
   CERVICAL_ROM_LIMIT, VOR_MIN_VELOCITY, VOR_TARGET_VELOCITY,
   RED_FLAGS, hasRedFlags,
   loadProfile, saveProfile, loadSessions, saveSession, summariseAdherence,
   type HeadPose, type HeadAxis, type RepCounterState, type CoachCue,
   type VestibularExercise, type VestibularSession, type AdherenceSummary,
+  type PoseSmoothingState,
 } from '@/lib/vestibular-rx';
 import {
   createFaceTracker, openCamera, cameraErrorKey,
@@ -321,6 +323,7 @@ export const AIVertigoRehabCoach: React.FC = () => {
     let frameCount = 0;
     let fpsWindowStart = performance.now();
     let smoothed: HeadPose | null = null;
+    let smoothState: PoseSmoothingState = createPoseSmoothingState();
 
     const loop = () => {
       if (cancelled) return;
@@ -376,6 +379,7 @@ export const AIVertigoRehabCoach: React.FC = () => {
             // the count starts again rather than mixing two baselines.
             repRef.current = createRepState();
             smoothed = null;
+            smoothState = createPoseSmoothingState();
             setNeutralPose(avg);
             setCalibrating(false);
             saveProfile({ ...loadProfile(), neutralPose: avg });
@@ -388,7 +392,9 @@ export const AIVertigoRehabCoach: React.FC = () => {
         }
 
         const relative = neutralRef.current ? relativePose(face.pose, neutralRef.current) : face.pose;
-        smoothed = smoothPose(smoothed, relative);
+        const smoothResult = smoothPose(smoothState, relative, now);
+        smoothState = smoothResult.state;
+        smoothed = smoothResult.pose;
         poseRef.current = smoothed;
 
         // 3. Count, but never while calibrating — the patient is holding still.

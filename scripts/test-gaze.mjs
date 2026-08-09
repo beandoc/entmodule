@@ -3,6 +3,8 @@ import {
   detectFixations, detectSaccades, scoreVOR, detectNystagmusHeuristic,
   computeAntiSaccadeErrorRate, scoreSmoothPursuit, analyseSession,
   summariseGazeAdherence, generateInsight,
+  computeSlowPhaseVelocity, computeOptokineticMetrics,
+  oknTargetX, OKN_STIMULUS_DEG_PER_SEC, OKN_DIRECTION_PERIOD_SEC, DEG_PER_UNIT,
 } from '../src/lib/gaze-tracking.ts';
 
 console.log('--------------------------------------------------------');
@@ -134,6 +136,47 @@ console.log('   [PASS] a stationary head reports no gain rather than a spurious 
 assert.equal(scoreVOR([], []).gain, 0);
 assert.equal(scoreVOR(compensating.slice(0, 2), head.slice(0, 2)).gain, 0);
 console.log('   [PASS] short input degrades to zero gain');
+
+// Phase: an eye that opposes the head with no delay reports no lag
+assert.ok(
+  Math.abs(vor.phaseLagMs) <= 10,
+  `an instantaneous compensating eye must report ~0 ms lag, got ${vor.phaseLagMs}`
+);
+console.log(`   [PASS] an instantaneous compensating eye reports ${vor.phaseLagMs} ms lag`);
+
+// CRITICAL: a known delay must actually be recovered. This is the regression
+// guard for the search that used to be seeded so it could never update, and so
+// reported 0° for every patient regardless of how late their eyes were.
+for (const lagMs of [25, 50, 100]) {
+  const delayed = series(N, HZ, (_i, t) => ({
+    x: 0.5 - (10 * Math.sin(((t - lagMs) / 1000) * 2 * Math.PI)) / 30,
+    y: 0.5,
+  }));
+  const delayedVor = scoreVOR(delayed, head);
+  assert.ok(
+    Math.abs(delayedVor.phaseLagMs - lagMs) <= 10,
+    `a ${lagMs} ms delayed eye must read back as ~${lagMs} ms, got ${delayedVor.phaseLagMs}`
+  );
+  // At 1 Hz head motion, one cycle is 360°, so the angle tracks the delay.
+  const expectedDeg = (lagMs / 1000) * 360;
+  assert.ok(
+    Math.abs(delayedVor.phaseErrorDeg - expectedDeg) <= 12,
+    `${lagMs} ms at 1 Hz is ~${expectedDeg.toFixed(0)}°, got ${delayedVor.phaseErrorDeg}`
+  );
+}
+console.log('   [PASS] 25, 50 and 100 ms eye delays are each recovered in ms and in degrees');
+
+// A head that never moved gives the correlation nothing to lock onto, and an
+// argmin over noise must not be dressed up as a measurement.
+assert.equal(
+  scoreVOR(compensating, stillHead).phaseLagMs, 0,
+  'a stationary head must report no phase lag rather than a spurious one'
+);
+assert.equal(
+  scoreVOR(frozen, head).phaseErrorDeg, 0,
+  'a frozen eye correlates with nothing, so no phase angle may be reported'
+);
+console.log('   [PASS] uncorrelated signals report no phase rather than noise');
 
 // 4. Nystagmus heuristic
 console.log('\n4. Testing the nystagmus heuristic...');
@@ -278,6 +321,163 @@ const declining = summariseGazeAdherence([
 ]);
 assert.equal(declining.trend, 'declining', `falling gains must read as declining, got ${declining.trend}`);
 console.log('   [PASS] adherence trends track direction across sessions');
+
+// 8. Slow phase velocity
+console.log('\n8. Testing slow phase velocity...');
+
+// The 3 Hz sawtooth from section 4 drifts 0.054 units over 0.3 s. In degrees
+// that is 0.054 x 30 = 1.62°, so SPV must come out at ~5.4 °/s.
+const spv = computeSlowPhaseVelocity(sawtooth);
+assert.equal(spv.axis, 'horizontal', 'the drifting axis must be the analysed one');
+assert.ok(
+  Math.abs(spv.spvDegPerSec - 5.4) < 0.6,
+  `a 1.62° drift per 0.3 s beat is ~5.4 °/s, got ${spv.spvDegPerSec}`
+);
+assert.equal(spv.fastPhaseDirection, 'left', 'a rightward drift flicks back left-beating');
+assert.ok(spv.signedSpvDegPerSec > 0, 'the drift itself runs rightward, so signed SPV is positive');
+assert.ok(spv.beats >= 10 && spv.beats <= 13, `4 s at 3 Hz is ~12 beats, got ${spv.beats}`);
+assert.ok(
+  Math.abs(spv.beatsPerMinute - 180) < 30,
+  `3 Hz is ~180 beats/min, got ${spv.beatsPerMinute}`
+);
+console.log(`   [PASS] the sawtooth measures ${spv.spvDegPerSec} °/s SPV, ${spv.fastPhaseDirection}-beating at ${spv.beatsPerMinute}/min`);
+
+// Mirror the sawtooth and the beat must be named the other way round
+const mirroredSaw = sawtooth.map(p => ({ ...p, x: 1 - p.x }));
+const spvMirrored = computeSlowPhaseVelocity(mirroredSaw);
+assert.equal(spvMirrored.fastPhaseDirection, 'right', 'a leftward drift flicks back right-beating');
+assert.ok(
+  Math.abs(spvMirrored.spvDegPerSec - spv.spvDegPerSec) < 0.3,
+  'mirroring changes the beat direction, not the speed'
+);
+console.log('   [PASS] mirroring the drift flips the beat direction and preserves the speed');
+
+// A vertical sawtooth is measured on the vertical axis
+const verticalSaw = sawtooth.map(p => ({ ...p, x: 0.5, y: p.x }));
+const spvVertical = computeSlowPhaseVelocity(verticalSaw);
+assert.equal(spvVertical.axis, 'vertical', 'the larger excursion picks the axis');
+assert.equal(spvVertical.fastPhaseDirection, 'up', 'a downward drift flicks back up-beating');
+console.log('   [PASS] a vertical drift is measured on the vertical axis and named up-beating');
+
+// A steady gaze has no beats to measure
+const spvSteady = computeSlowPhaseVelocity(steady);
+assert.equal(spvSteady.spvDegPerSec, 0, 'a steady gaze has no drift velocity');
+assert.equal(spvSteady.fastPhaseDirection, 'none');
+assert.equal(computeSlowPhaseVelocity([]).beats, 0, 'empty input degrades safely');
+console.log('   [PASS] a steady gaze and empty input yield no slow phases');
+
+// A tracking dropout must not be fitted as one long drift across the gap
+const spvGapped = computeSlowPhaseVelocity([
+  ...series(30, 60, (i) => ({ x: 0.40 + i * 0.002, y: 0.5 }), 0),
+  ...series(30, 60, (i) => ({ x: 0.70 + i * 0.002, y: 0.5 }), 3000),
+]);
+for (const seg of spvGapped.segments) {
+  assert.ok(seg.durationMs < 700, `no slow phase may span the 2.5 s dropout, got ${seg.durationMs} ms`);
+}
+console.log('   [PASS] a dropout breaks the drift instead of being fitted across');
+
+// The nystagmus flag now carries the measurement, not just the alarm
+const quantified = detectNystagmusHeuristic(sawtooth);
+assert.ok(quantified.detected);
+assert.ok(
+  Math.abs(quantified.slowPhaseVelocityDegPerSec - 5.4) < 0.6,
+  `the flag must carry its SPV, got ${quantified.slowPhaseVelocityDegPerSec}`
+);
+assert.equal(quantified.fastPhaseDirection, 'left');
+assert.ok(quantified.beatsPerMinute > 0, 'the flag must carry a beat rate');
+
+// A drift below the clinical floor is not worth alarming a patient over
+const featherDrift = series(240, 60, (i) => {
+  const phase = (i % 20) / 20;
+  const x = phase < 0.9 ? 0.5 + phase * 0.012 : 0.5 + (1 - (phase - 0.9) / 0.1) * 0.0108;
+  return { x, y: 0.5 };
+});
+assert.equal(
+  detectNystagmusHeuristic(featherDrift).detected, false,
+  'a sub-clinical drift (~1 °/s SPV) must not be flagged'
+);
+console.log('   [PASS] the flag carries SPV and beat direction, and sub-clinical drift is not flagged');
+
+// 9. Optokinetic metrics
+console.log('\n9. Testing optokinetic slow phase velocity...');
+
+const OKN_HZ = 60;
+const OKN_SECONDS = OKN_DIRECTION_PERIOD_SEC * 2;
+const OKN_SAMPLES = OKN_SECONDS * OKN_HZ;
+const BEAT_SEC = 0.3;
+const SLOW_FRACTION = 0.85;
+
+const oknTargets = Array.from({ length: OKN_SAMPLES }, (_, i) => {
+  const t = (i * 1000) / OKN_HZ;
+  return { x: oknTargetX(t / 1000), y: 0.5, t, mode: 'optokinetic' };
+});
+
+/** An eye following the sweep at `gainRight` one way and `gainLeft` the other. */
+const oknGaze = (gainRight, gainLeft) =>
+  series(OKN_SAMPLES, OKN_HZ, (_i, t) => {
+    const sec = t / 1000;
+    const rightward = Math.floor(sec / OKN_DIRECTION_PERIOD_SEC) % 2 === 0;
+    const sign = rightward ? 1 : -1;
+    const unitsPerSec = ((rightward ? gainRight : gainLeft) * OKN_STIMULUS_DEG_PER_SEC) / DEG_PER_UNIT;
+    const slowSec = BEAT_SEC * SLOW_FRACTION;
+    const amplitude = unitsPerSec * slowSec;
+    const phase = sec % BEAT_SEC;
+    const offset = phase < slowSec
+      ? phase * unitsPerSec - amplitude / 2                                   // drift with the sweep
+      : amplitude / 2 - ((phase - slowSec) / (BEAT_SEC - slowSec)) * amplitude; // flick back
+    return { x: 0.5 + sign * offset, y: 0.5 };
+  });
+
+const oknSymmetric = computeOptokineticMetrics(oknGaze(1.0, 1.0), oknTargets);
+assert.ok(
+  Math.abs(oknSymmetric.slowPhaseVelocityRight - OKN_STIMULUS_DEG_PER_SEC) < 3,
+  `a gain-1.0 eye must drift at the stimulus speed, got ${oknSymmetric.slowPhaseVelocityRight} °/s`
+);
+assert.ok(
+  Math.abs(oknSymmetric.oknGainRight - 1) < 0.15 && Math.abs(oknSymmetric.oknGainLeft - 1) < 0.15,
+  `gains must land near 1.0, got R ${oknSymmetric.oknGainRight} / L ${oknSymmetric.oknGainLeft}`
+);
+assert.ok(
+  oknSymmetric.asymmetryPercent < 15,
+  `a symmetric response must read below the 15% threshold, got ${oknSymmetric.asymmetryPercent}%`
+);
+console.log(`   [PASS] a symmetric gain-1.0 response reads R ${oknSymmetric.slowPhaseVelocityRight} / L ${oknSymmetric.slowPhaseVelocityLeft} °/s, ${oknSymmetric.asymmetryPercent}% asymmetry`);
+
+// A weak response one way is exactly what the asymmetry figure exists to catch
+const oknAsymmetric = computeOptokineticMetrics(oknGaze(1.0, 0.4), oknTargets);
+assert.ok(
+  oknAsymmetric.slowPhaseVelocityLeft < oknAsymmetric.slowPhaseVelocityRight,
+  'the weaker direction must measure the lower SPV'
+);
+assert.ok(
+  oknAsymmetric.asymmetryPercent > 15,
+  `a 1.0 vs 0.4 response must exceed the 15% threshold, got ${oknAsymmetric.asymmetryPercent}%`
+);
+console.log(`   [PASS] a 1.0-vs-0.4 response reads ${oknAsymmetric.asymmetryPercent}% asymmetry (abnormal)`);
+
+// An eye that ignored the sweep scores nothing rather than something
+const oknFrozen = computeOptokineticMetrics(
+  series(OKN_SAMPLES, OKN_HZ, () => ({ x: 0.5, y: 0.5 })),
+  oknTargets,
+);
+assert.equal(oknFrozen.slowPhaseVelocityRight, 0, 'a frozen eye has no optokinetic response');
+assert.equal(oknFrozen.asymmetryPercent, 0, 'no response means no asymmetry to report');
+assert.equal(computeOptokineticMetrics([], []).oknGainRight, 0, 'empty input degrades safely');
+console.log('   [PASS] a frozen eye and empty input report no response rather than a spurious one');
+
+// The stimulus generator must actually run at the speed the gain divides by
+// Sampled inside one sweep, clear of the wrap back to the far edge.
+const sweepStart = oknTargetX(0.1);
+const sweepEnd = oknTargetX(0.6);
+assert.ok(
+  Math.abs(((sweepEnd - sweepStart) * DEG_PER_UNIT) / 0.5 - OKN_STIMULUS_DEG_PER_SEC) < 0.5,
+  `the sweep must travel at ${OKN_STIMULUS_DEG_PER_SEC} °/s`
+);
+assert.ok(
+  oknTargetX(OKN_DIRECTION_PERIOD_SEC + 0.6) < oknTargetX(OKN_DIRECTION_PERIOD_SEC + 0.1),
+  'the sweep must reverse direction on the second leg'
+);
+console.log(`   [PASS] the sweep runs at ${OKN_STIMULUS_DEG_PER_SEC} °/s and reverses after ${OKN_DIRECTION_PERIOD_SEC} s`);
 
 console.log('\n--------------------------------------------------------');
 console.log('All gaze analytics tests passed.');

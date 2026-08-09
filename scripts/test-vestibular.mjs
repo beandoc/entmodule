@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import {
   eulerFromMatrix, matrixFromEuler, poseFromAnchors, clampPose, relativePose,
-  mirrorPose, adaptiveSmooth, CERVICAL_ROM_LIMIT,
+  mirrorPose, CERVICAL_ROM_LIMIT,
+  createOneEuroState, oneEuroStep, createPoseSmoothingState, smoothPose,
   createRepState, stepRepCounter, DEFAULT_REP_CONFIG, repConfigFor,
   scoreSession, coachingCue, VOR_MIN_VELOCITY,
   EXERCISES, exerciseById, EPLEY, BRANDT_DAROFF, manoeuvreDuration, renderInstruction,
@@ -93,14 +94,87 @@ assert.deepEqual(calibrated, { yaw: 2, pitch: 1, roll: 1 }, 'calibration must su
 assert.deepEqual(mirrorPose({ yaw: 20, pitch: 10, roll: -5 }), { yaw: -20, pitch: 10, roll: 5 });
 console.log('   [PASS] ROM clamping, neutral-pose calibration and selfie mirroring');
 
-// 4. Adaptive smoothing: lags when still, tracks when fast
-console.log('\n4. Testing adaptive smoothing...');
-let still = 0;
-for (let i = 0; i < 8; i++) still = adaptiveSmooth(still, 1);
-assert.ok(still < 0.95, 'small drift must be damped, not followed exactly');
-const fast = adaptiveSmooth(0, 60);
-assert.ok(fast > 50, `a fast head thrust must not be lagged (got ${fast})`);
-console.log(`   [PASS] 1° drift damped to ${still.toFixed(2)}° after 8 frames; a 60° thrust passes ${fast.toFixed(1)}°`);
+// 4. One-Euro head smoothing: lags when still, tracks when fast
+console.log('\n4. Testing One-Euro head smoothing...');
+const FRAME_MS = 1000 / 60;
+
+// A tiny step held for several frames is landmark-noise-scale motion and must
+// stay damped rather than being followed exactly.
+let s1 = createOneEuroState();
+let t1 = 0;
+s1 = oneEuroStep(s1, 0, t1).state; // prime at rest
+let lastSmall = 0;
+for (let i = 0; i < 8; i++) {
+  t1 += FRAME_MS;
+  const r = oneEuroStep(s1, 1, t1);
+  s1 = r.state;
+  lastSmall = r.value;
+}
+assert.ok(lastSmall < 0.95, `a tiny 1° step must be damped, not followed exactly, got ${lastSmall}`);
+console.log(`   [PASS] a 1° step damps to ${lastSmall.toFixed(2)}° after 8 frames at 60 fps`);
+
+// A genuine fast head thrust (VOR-speed) must pass through with negligible lag.
+let s2 = createOneEuroState();
+let t2 = 0;
+s2 = oneEuroStep(s2, 0, t2).state; // prime at rest
+t2 += FRAME_MS;
+const fast = oneEuroStep(s2, 60, t2).value;
+assert.ok(fast > 50, `a fast head thrust must not be lagged, got ${fast}`);
+console.log(`   [PASS] a 60° single-frame thrust passes at ${fast.toFixed(1)}°`);
+
+// Frame-rate independence: the same physical motion filtered at 30 fps and at
+// 60 fps must converge to comparable values — the old speed-per-frame blend was
+// frame-rate dependent because it never divided by dt. (A very short handful-
+// of-samples movement legitimately differs a little between rates — that is
+// ordinary discretisation, not a bug — so this uses a clinically realistic
+// 300 ms thrust where both rates have enough samples to agree closely.)
+const trackRamp = (hz) => {
+  let s = createOneEuroState();
+  let t = 0;
+  s = oneEuroStep(s, 0, t).state;
+  let last = 0;
+  const dtMs = 1000 / hz;
+  const totalMs = 300; // ~133 deg/s, a brisk VOR head thrust
+  for (let elapsed = dtMs; elapsed <= totalMs; elapsed += dtMs) {
+    t = elapsed;
+    const target = (elapsed / totalMs) * 40; // ramps 0 -> 40 deg
+    const r = oneEuroStep(s, target, t);
+    s = r.state;
+    last = r.value;
+  }
+  return last;
+};
+const at30 = trackRamp(30);
+const at60 = trackRamp(60);
+assert.ok(
+  Math.abs(at30 - at60) < 1,
+  `30 fps and 60 fps must track the same ramp comparably, got ${at30.toFixed(1)} vs ${at60.toFixed(1)}`
+);
+console.log(`   [PASS] a 40° / 300 ms thrust tracks to ${at30.toFixed(1)}° at 30 fps and ${at60.toFixed(1)}° at 60 fps`);
+
+// A tracking dropout must reset rather than compute a velocity across the gap.
+let s3 = createOneEuroState();
+s3 = oneEuroStep(s3, 0, 0).state;
+s3 = oneEuroStep(s3, 5, FRAME_MS).state;
+const afterGap = oneEuroStep(s3, 30, FRAME_MS + 1000); // 1 s dropout, then a new pose
+assert.equal(afterGap.value, 30, 'a long dropout must snap to the new sample, not smooth across it');
+console.log('   [PASS] a 1 s dropout resets the filter instead of manufacturing a huge velocity');
+
+// Pure and deterministic: replaying the same input twice from the same state
+// must produce identical output (no hidden mutable state).
+const seedState = oneEuroStep(createOneEuroState(), 10, 0).state;
+const replayA = oneEuroStep(seedState, 15, FRAME_MS).value;
+const replayB = oneEuroStep(seedState, 15, FRAME_MS).value;
+assert.equal(replayA, replayB, 'the same state and input must produce the same output');
+console.log('   [PASS] oneEuroStep is pure — replaying the same state is deterministic');
+
+// smoothPose applies the filter across all three axes together.
+let poseState = createPoseSmoothingState();
+poseState = smoothPose(poseState, { yaw: 0, pitch: 0, roll: 0 }, 0).state;
+const posed = smoothPose(poseState, { yaw: 60, pitch: -30, roll: 10 }, FRAME_MS);
+assert.ok(Math.abs(posed.pose.yaw) > 40, 'yaw must track a fast thrust');
+assert.ok(posed.pose.pitch < -20, 'pitch must track independently of yaw');
+console.log(`   [PASS] smoothPose tracks yaw ${posed.pose.yaw}° and pitch ${posed.pose.pitch}° independently`);
 
 // 5. Repetition state machine
 console.log('\n5. Testing the repetition state machine...');
@@ -245,7 +319,7 @@ assert.equal(new Set(ids).size, ids.length, 'exercise ids must be unique');
 for (const ex of EXERCISES) {
   assert.ok(ex.titleEn && ex.titleHi, `${ex.id} needs both languages`);
   assert.ok(ex.descEn && ex.descHi, `${ex.id} needs both descriptions`);
-  assert.ok(ex.targetAngle > 0 && ex.targetReps > 0, `${ex.id} needs a sane prescription`);
+  assert.ok((ex.targetAngle > 0 || ex.axis === null) && ex.targetReps > 0, `${ex.id} needs a sane prescription`);
   if (ex.axis) {
     const cfg = repConfigFor(ex);
     const peak = ex.targetAngle * cfg.peakFraction;
@@ -256,7 +330,7 @@ for (const ex of EXERCISES) {
   }
 }
 assert.equal(exerciseById('nope').id, EXERCISES[0].id, 'an unknown id must fall back, not crash');
-assert.ok(repConfigFor(exerciseById('yaw-slow-habituation')).minRepMs > repConfigFor(exerciseById('vor-x1-horizontal')).minRepMs,
+assert.ok(repConfigFor(exerciseById('cawthorne-diagonal')).minRepMs > repConfigFor(exerciseById('vor-x1-horizontal')).minRepMs,
   'slow habituation drills need a longer debounce than fast VOR drills');
 console.log('   [PASS] catalogue is well-formed and every target angle is physically reachable');
 

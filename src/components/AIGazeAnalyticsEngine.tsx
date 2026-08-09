@@ -101,8 +101,8 @@ export const AIGazeAnalyticsEngine: React.FC = () => {
   }, []);
 
   const calibrateNeutralGaze = useCallback(() => {
-    if (liveData.hasIris) {
-      neutralGazeRef.current = { x: liveData.gazeX, y: liveData.gazeY };
+    if (liveData.hasIris && liveData.rawOffsetX !== undefined && liveData.rawOffsetY !== undefined) {
+      neutralGazeRef.current = { x: liveData.rawOffsetX, y: liveData.rawOffsetY };
     }
   }, [liveData]);
 

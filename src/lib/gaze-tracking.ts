@@ -383,8 +383,16 @@ export function extractGazeFromLandmarks(
   const avgOffsetY = (lOffsetY + rOffsetY) / 2;
 
   // Zero-point calibration offset
-  const zeroX = neutralOffset?.x ?? avgOffsetX;
-  const zeroY = neutralOffset?.y ?? avgOffsetY;
+  // Raw pupil offsets are displacement ratios typically within [-0.3, +0.3]
+  let zeroX = avgOffsetX;
+  let zeroY = avgOffsetY;
+  if (neutralOffset) {
+    // Safety guard: if neutralOffset was passed as normalized screen coords (> 0.35), ignore it
+    if (Math.abs(neutralOffset.x) < 0.35 && Math.abs(neutralOffset.y) < 0.35) {
+      zeroX = neutralOffset.x;
+      zeroY = neutralOffset.y;
+    }
+  }
 
   let deltaX = avgOffsetX - zeroX;
   let deltaY = avgOffsetY - zeroY;

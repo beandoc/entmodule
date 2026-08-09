@@ -183,7 +183,7 @@ export const EyeTracingGraph: React.FC<EyeTracingGraphProps> = ({
           ctx.shadowBlur = 0;
         }
 
-        // 2. Left Eye Line (Blue)
+        // 2. Left Eye Line (Cyan-Blue - Wider base stroke)
         if (showLeftEye && visibleData.length > 0) {
           ctx.beginPath();
           let started = false;
@@ -194,15 +194,15 @@ export const EyeTracingGraph: React.FC<EyeTracingGraphProps> = ({
             if (!started) { ctx.moveTo(x, y); started = true; }
             else { ctx.lineTo(x, y); }
           });
-          ctx.strokeStyle = '#3b82f6';
-          ctx.lineWidth = 2.5;
-          ctx.shadowColor = 'rgba(59, 130, 246, 0.6)';
+          ctx.strokeStyle = '#38bdf8';
+          ctx.lineWidth = 3.5;
+          ctx.shadowColor = 'rgba(56, 189, 248, 0.7)';
           ctx.shadowBlur = 4;
           ctx.stroke();
           ctx.shadowBlur = 0;
         }
 
-        // 3. Right Eye Line (Red)
+        // 3. Right Eye Line (Rose-Red - Distinct overlay stroke)
         if (showRightEye && visibleData.length > 0) {
           ctx.beginPath();
           let started = false;
@@ -213,15 +213,15 @@ export const EyeTracingGraph: React.FC<EyeTracingGraphProps> = ({
             if (!started) { ctx.moveTo(x, y); started = true; }
             else { ctx.lineTo(x, y); }
           });
-          ctx.strokeStyle = '#ef4444';
-          ctx.lineWidth = 2.5;
-          ctx.shadowColor = 'rgba(239, 68, 68, 0.6)';
+          ctx.strokeStyle = '#f43f5e';
+          ctx.lineWidth = 2.0;
+          ctx.shadowColor = 'rgba(244, 63, 94, 0.7)';
           ctx.shadowBlur = 4;
           ctx.stroke();
           ctx.shadowBlur = 0;
         }
 
-        // Playhead Vertical Cursor Line
+        // Playhead Vertical Cursor Line & End-Point Indicators
         const lastPt = visibleData[visibleData.length - 1];
         if (lastPt) {
           const headX = paddingLeft + ((lastPt.t - minTime) / windowMs) * graphWidth;
@@ -242,13 +242,13 @@ export const EyeTracingGraph: React.FC<EyeTracingGraphProps> = ({
           }
           if (showLeftEye && !lastPt.isBlink) {
             const ly = paddingTop + (1 - getYVal(lastPt, 'left')) * graphHeight;
-            ctx.beginPath(); ctx.arc(headX, ly, 5, 0, Math.PI * 2);
-            ctx.fillStyle = '#3b82f6'; ctx.fill(); ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5; ctx.stroke();
+            ctx.beginPath(); ctx.arc(headX - 3, ly, 5, 0, Math.PI * 2);
+            ctx.fillStyle = '#38bdf8'; ctx.fill(); ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5; ctx.stroke();
           }
           if (showRightEye && !lastPt.isBlink) {
             const ry = paddingTop + (1 - getYVal(lastPt, 'right')) * graphHeight;
-            ctx.beginPath(); ctx.arc(headX, ry, 5, 0, Math.PI * 2);
-            ctx.fillStyle = '#ef4444'; ctx.fill(); ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5; ctx.stroke();
+            ctx.beginPath(); ctx.arc(headX + 3, ry, 5, 0, Math.PI * 2);
+            ctx.fillStyle = '#f43f5e'; ctx.fill(); ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5; ctx.stroke();
           }
         }
       } else {

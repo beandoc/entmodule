@@ -184,7 +184,8 @@ export function scoreSmoothPursuitVNG(
     sumGazeSq += gvx * gvx + gvy * gvy;
 
     if (tvMag > 0.1) {
-      instantaneousGains.push(Math.min(gvMag / tvMag, 1.25));
+      const projGain = (gvx * tvx + gvy * tvy) / (tvMag * tvMag);
+      instantaneousGains.push(Math.min(Math.max(projGain, -1.0), 1.25));
     }
 
     // Retinal slip velocity (deg/s)
@@ -195,7 +196,7 @@ export function scoreSmoothPursuitVNG(
   }
 
   const rawVelocityGain = sumTgtSq > 1e-9 ? sumDot / sumTgtSq : 0;
-  const velocityGain = Math.min(Math.max(parseFloat(rawVelocityGain.toFixed(2)), -1.0), 1.05);
+  const velocityGain = Math.min(Math.max(parseFloat(rawVelocityGain.toFixed(2)), 0), 1.05);
 
   const denom = Math.sqrt(sumTgtSq * sumGazeSq);
   const directionalAgreement =
@@ -751,33 +752,47 @@ function fitSinusoidalGainAtFrequency(
 ): FrequencyGainResult {
   let cosTgt = 0, sinTgt = 0;
   let cosGaze = 0, sinGaze = 0;
-  let count = 0;
 
+  let meanTgtX = 0;
+  let meanGazeX = 0;
+  const validPairs: { tSec: number; tgtX: number; gazeX: number }[] = [];
+
+  const t0 = targets[0]?.t ?? 0;
   for (const tgt of targets) {
     const g = findValidGazeAtTime(gazes, tgt.t);
     if (!g) continue;
-
-    const tSec = (tgt.t - targets[0].t) / 1000;
-    const omega = 2 * Math.PI * freqHz;
-    const c = Math.cos(omega * tSec);
-    const s = Math.sin(omega * tSec);
-
-    cosTgt += tgt.x * c;
-    sinTgt += tgt.x * s;
-
-    cosGaze += g.x * c;
-    sinGaze += g.x * s;
-    count++;
+    const tSec = (tgt.t - t0) / 1000;
+    validPairs.push({ tSec, tgtX: tgt.x, gazeX: g.x });
+    meanTgtX += tgt.x;
+    meanGazeX += g.x;
   }
 
-  if (count < 10) {
+  if (validPairs.length < 10) {
     return { frequencyHz: freqHz, gain: 0, phaseLagDeg: 0, harmonicDistortionPct: 0 };
+  }
+
+  meanTgtX /= validPairs.length;
+  meanGazeX /= validPairs.length;
+
+  for (const pair of validPairs) {
+    const omega = 2 * Math.PI * freqHz;
+    const c = Math.cos(omega * pair.tSec);
+    const s = Math.sin(omega * pair.tSec);
+
+    const acTgt = pair.tgtX - meanTgtX;
+    const acGaze = pair.gazeX - meanGazeX;
+
+    cosTgt += acTgt * c;
+    sinTgt += acTgt * s;
+
+    cosGaze += acGaze * c;
+    sinGaze += acGaze * s;
   }
 
   const ampTgt = Math.sqrt(cosTgt * cosTgt + sinTgt * sinTgt);
   const ampGaze = Math.sqrt(cosGaze * cosGaze + sinGaze * sinGaze);
 
-  const gain = ampTgt > 1e-6 ? Math.min(ampGaze / ampTgt, 1.5) : 0;
+  const gain = ampTgt > 1e-6 ? Math.min(Math.max(ampGaze / ampTgt, 0), 1.5) : 0;
   const phaseTgt = Math.atan2(sinTgt, cosTgt);
   const phaseGaze = Math.atan2(sinGaze, cosGaze);
   let phaseLagRad = phaseTgt - phaseGaze;

@@ -1670,7 +1670,7 @@ export function scoreSmoothPursuit(
 
   // Regression gain: normalized to max 1.05 for normal full-amplitude pursuit
   const rawGain = sumTgtSq > 1e-9 ? sumDot / sumTgtSq : 0;
-  const pursuitGain = Math.min(Math.max(parseFloat(rawGain.toFixed(2)), -1.0), 1.05);
+  const pursuitGain = Math.min(Math.max(parseFloat(rawGain.toFixed(2)), 0), 1.05);
 
   // Cosine similarity between the two velocity vectors — the phase/direction
   // agreement independent of speed, so a gain near 1.0 achieved by chance

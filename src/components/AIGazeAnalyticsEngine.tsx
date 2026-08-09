@@ -462,6 +462,15 @@ export const AIGazeAnalyticsEngine: React.FC = () => {
             onCalibrateGaze={calibrateNeutralGaze}
             onEnsureModelReady={ensureModelReady}
             modelFailed={modelFailed}
+            onSaveSession={(newSession, gazes, heads) => {
+              setHistorySessions(prev => [newSession, ...prev]);
+              setSession({
+                gazeHistory: gazes,
+                headHistory: heads,
+                analytics: newSession.analytics,
+                durationMs: newSession.durationMs,
+              });
+            }}
           />
         )}
         {tab === 'session' && (

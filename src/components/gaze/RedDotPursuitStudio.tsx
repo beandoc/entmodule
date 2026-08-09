@@ -11,7 +11,9 @@ import { VNGReportCard } from '../VNGReportCard';
 import {
   GazePoint, PursuitTargetPoint, PursuitScore, VORScore, VorX2Validation,
   OptokineticMetrics, scoreSmoothPursuit, scoreVOR, validateVorX2Opposition,
-  computeOptokineticMetrics, detectSaccades, OKN_STIMULUS_DEG_PER_SEC
+  computeOptokineticMetrics, detectSaccades, OKN_STIMULUS_DEG_PER_SEC,
+  GazeSession, GazeAnalytics, saveGazeSession, syncGazeSessionToBackend,
+  detectFixations, detectNystagmusHeuristic, computeAntiSaccadeErrorRate, generateInsight,
 } from '@/lib/gaze-tracking';
 import {
   SmoothPursuitVNGScore, VorX1Score, VorX2Score, SaccadeScore, OknScore,
@@ -37,9 +39,10 @@ export const RedDotPursuitTab: React.FC<{
   onCalibrateGaze?: () => void;
   onEnsureModelReady: () => Promise<boolean>;
   modelFailed: boolean;
+  onSaveSession?: (session: GazeSession, gazes: GazePoint[], heads: Array<{ t: number; yaw: number }>) => void;
 }> = ({
   hi, cameraState, liveData, canvasRef, onStartCamera, onStopCamera, onCalibrateGaze,
-  onEnsureModelReady, modelFailed,
+  onEnsureModelReady, modelFailed, onSaveSession,
 }) => {
   const targetCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const eyeTracingGraphRef = useRef<HTMLDivElement | null>(null);
@@ -409,12 +412,51 @@ export const RedDotPursuitTab: React.FC<{
       setVngVorX1Score(scoreVorX1({ x: 0.5, y: 0.5 }, gazes, heads));
     }
 
+    const durationMs = performance.now() - startTimeRef.current;
+    const fixations = detectFixations(gazes);
+
+    const analytics: GazeAnalytics = {
+      fixations,
+      saccades,
+      fixationFraction: fixations.reduce((sum, f) => sum + f.duration, 0) / (durationMs || 1),
+      meanFixationDuration: fixations.length ? fixations.reduce((sum, f) => sum + f.duration, 0) / fixations.length : 0,
+      meanSaccadeVelocity: saccades.length ? saccades.reduce((sum, s) => sum + s.peakVelocityDeg, 0) / saccades.length : 0,
+      vorScore: scoreVOR(gazes, heads),
+      nystagmus: detectNystagmusHeuristic(gazes),
+      antiSaccadeErrorRate: computeAntiSaccadeErrorRate(saccades, heads),
+      clinicalGuidance: '',
+      centralPeripheralLoc: 'normal',
+      insight: generateInsight(
+        {
+          fixations, saccades, vorScore: scoreVOR(gazes, heads), nystagmus: detectNystagmusHeuristic(gazes), antiSaccadeErrorRate: 0,
+          clinicalGuidance: '', centralPeripheralLoc: 'normal',
+          fixationFraction: 0.8, meanFixationDuration: 300, meanSaccadeVelocity: 350, insight: '',
+        },
+        hi ? 'hi' : 'en'
+      ),
+    };
+
+    const newSession: GazeSession = {
+      id: `gaze-${Date.now()}`,
+      date: new Date().toISOString(),
+      exerciseId: `pursuit-${pattern}`,
+      analytics,
+      durationMs,
+      createdAt: new Date().toISOString(),
+    };
+
+    saveGazeSession(newSession);
+    syncGazeSessionToBackend(newSession);
+    if (onSaveSession) {
+      onSaveSession(newSession, gazes, heads);
+    }
+
     const endMsg = hi
       ? 'टेस्ट पूरा हुआ। नीचे अपनी नैदानिक गेज़ रिपोर्ट कार्ड और वेवफॉर्म देखें।'
       : 'Test complete. Scroll down to review your VNG Clinical Report Card and eye waveforms.';
 
     speakInstruction(endMsg);
-  }, [hi, pattern, speakInstruction, speedHz]);
+  }, [hi, onSaveSession, pattern, speakInstruction, speedHz]);
 
   const stopTestRef = useRef(stopTest);
   useEffect(() => { stopTestRef.current = stopTest; }, [stopTest]);

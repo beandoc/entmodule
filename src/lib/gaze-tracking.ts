@@ -136,17 +136,43 @@ export interface NystagmusFlag {
   amplitude: number;
 }
 
+export interface SaccadeMetrics {
+  latencyMs: number; // Normal range: 150-250 ms (Pre-motor / cortical pathways)
+  precisionPercent: number; // Normal range: 85-115% (Cerebellar dysmetria check)
+  peakVelocityDegPerSec: number; // Normal range: 250-600 deg/s (Brainstem & Ocular nerves III, IV, VI)
+  isHypometria: boolean;
+  isHypermetria: boolean;
+}
+
+export interface SmoothPursuitVngMetrics {
+  gain01Hz: number; // Normal > 0.8
+  gain03Hz: number; // Normal > 0.75
+  gain05Hz: number; // Normal > 0.65
+  saccadicIntrusionsCount: number; // Catch-up / catch-back saccades count
+  retinalSlipDegPerSec: number;
+}
+
+export interface OptokineticMetrics {
+  slowPhaseVelocityRight: number; // deg/s
+  slowPhaseVelocityLeft: number; // deg/s
+  oknGainRight: number; // SPV / 20 deg/s
+  oknGainLeft: number;
+  asymmetryPercent: number; // Normal < 15%
+}
+
 export interface GazeAnalytics {
-  fixations: Fixation[];
-  saccades: Saccade[];
   vorScore: VORScore | null;
   nystagmus: NystagmusFlag;
-  /** Mean fixation duration (ms). */
+  fixations: Fixation[];
+  saccades: Saccade[];
   meanFixationDuration: number;
-  /** Mean saccade velocity (°/s). */
   meanSaccadeVelocity: number;
-  /** Anti-saccade error rate [0,1]. */
   antiSaccadeErrorRate: number;
+  saccadeVng?: SaccadeMetrics;
+  smoothPursuitVng?: SmoothPursuitVngMetrics;
+  optokineticVng?: OptokineticMetrics;
+  clinicalGuidance: string;
+  centralPeripheralLoc: 'peripheral' | 'central' | 'normal' | 'inconclusive';
   /** Fraction of session time spent in fixation. */
   fixationFraction: number;
   /** Insight string for the AI summary card. */
@@ -920,6 +946,8 @@ export function analyseSession(
     meanSaccadeVelocity,
     antiSaccadeErrorRate,
     fixationFraction,
+    clinicalGuidance: '',
+    centralPeripheralLoc: 'inconclusive',
     insight: '',
   };
 
@@ -990,7 +1018,7 @@ export interface PursuitTargetPoint {
   x: number; // normalised 0-1
   y: number; // normalised 0-1
   t: number; // ms
-  mode: 'horizontal' | 'vertical' | 'circular' | 'vor-x2';
+  mode: 'horizontal' | 'vertical' | 'circular' | 'vor-x2' | 'saccadic' | 'optokinetic';
 }
 
 export interface PursuitScore {

@@ -20,6 +20,7 @@ import {
   AlertTriangle, CheckCircle2, Zap, Target, BarChart3,
   ChevronRight, Play, Pause, RefreshCw, Download,
   Crosshair, Gauge, Info, Sparkles, WifiOff,
+  Mic, MicOff, Volume2, VolumeX, Clock, Minimize2, Maximize2,
 } from 'lucide-react';
 import { useAppData } from '@/lib/app-data-context';
 import {
@@ -100,7 +101,7 @@ const EMPTY_SESSION: SessionData = {
  */
 const HUD_SYNC_INTERVAL_MS = 80;
 
-type PursuitPattern = 'horizontal' | 'vertical' | 'circular' | 'vor-x2';
+type PursuitPattern = 'horizontal' | 'vertical' | 'circular' | 'vor-x2' | 'saccadic' | 'optokinetic';
 
 /**
  * Position of the pursuit target at a given moment, normalised to [0,1].
@@ -119,8 +120,18 @@ function targetPositionAt(
     case 'horizontal': return { x: 0.5 + 0.35 * Math.sin(phase), y: 0.5 };
     case 'vertical':   return { x: 0.5, y: 0.5 + 0.30 * Math.sin(phase) };
     case 'circular':   return { x: 0.5 + 0.30 * Math.cos(phase), y: 0.5 + 0.25 * Math.sin(phase) };
-    // VOR x2: the target sweeps against the head turn, so it mirrors horizontal.
     case 'vor-x2':     return { x: 0.5 - 0.35 * Math.sin(phase), y: 0.5 };
+    case 'saccadic': {
+      // Step jump between -35%, 0%, +35% every 1.5 seconds
+      const stepIdx = Math.floor(elapsedSec / 1.5) % 4;
+      const positions = [0.15, 0.5, 0.85, 0.5];
+      return { x: positions[stepIdx], y: 0.5 };
+    }
+    case 'optokinetic': {
+      // Constant velocity sweep (20 deg/s simulation across screen)
+      const sweepX = (elapsedSec * 0.4) % 1.0;
+      return { x: sweepX, y: 0.5 };
+    }
   }
 }
 
@@ -289,7 +300,9 @@ export const AIGazeAnalyticsEngine: React.FC = () => {
     const analytics: GazeAnalytics = {
       fixations, saccades, vorScore, nystagmus: nyst,
       meanFixationDuration, meanSaccadeVelocity,
-      antiSaccadeErrorRate, fixationFraction, insight: '',
+      antiSaccadeErrorRate, fixationFraction,
+      clinicalGuidance: '', centralPeripheralLoc: 'inconclusive',
+      insight: '',
     };
     analytics.insight = generateInsight(analytics, hi ? 'hi' : 'en');
 
@@ -1822,10 +1835,25 @@ const RedDotPursuitTab: React.FC<{
   hi, cameraState, liveData, canvasRef, onStartCamera, onStopCamera, onCalibrateGaze,
 }) => {
   const targetCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const eyeTracingGraphRef = useRef<HTMLDivElement | null>(null);
 
   const [pattern, setPattern] = useState<PursuitPattern>('horizontal');
   const [speedHz, setSpeedHz] = useState<number>(0.4);
   const [isTesting, setIsTesting] = useState(false);
+
+  // 60-Second Test Countdown Timer State
+  const [timeLeftSec, setTimeLeftSec] = useState<number>(60);
+  const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Camera PIP Minimization Toggle
+  const [isCameraMinimized, setIsCameraMinimized] = useState(false);
+
+  // Voice Feedback & Hands-Free Voice Command States
+  const [voiceFeedbackEnabled, setVoiceFeedbackEnabled] = useState(true);
+  const [isVoiceCommandActive, setIsVoiceCommandActive] = useState(false);
+  const [lastVoiceCommand, setLastVoiceCommand] = useState<string | null>(null);
+  const [voiceSupported, setVoiceSupported] = useState(false);
+  const recognitionRef = useRef<any>(null);
 
   // 2-Point Rule Symptom VAS (0-10)
   const [symptomBefore, setSymptomBefore] = useState<number>(2);
@@ -1856,6 +1884,48 @@ const RedDotPursuitTab: React.FC<{
 
   useEffect(() => { liveDataRef.current = liveData; }, [liveData]);
   useEffect(() => { isTestingRef.current = isTesting; }, [isTesting]);
+
+  // Clean up timer on unmount
+  useEffect(() => {
+    return () => {
+      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+    };
+  }, []);
+
+  // Natural Voice Feedback (Text-to-Speech)
+  const speakInstruction = useCallback((text: string) => {
+    if (!voiceFeedbackEnabled || typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+    try {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 0.95;
+      utterance.pitch = 1.0;
+
+      const voices = window.speechSynthesis.getVoices();
+      if (voices && voices.length > 0) {
+        if (hi) {
+          const hiVoice = voices.find(v => v.lang.includes('hi') || v.name.includes('Hindi'));
+          if (hiVoice) utterance.voice = hiVoice;
+        } else {
+          const enVoice = voices.find(v => (v.lang.includes('en-US') || v.lang.includes('en-GB')) && (v.name.includes('Natural') || v.name.includes('Google') || v.name.includes('Samantha')));
+          if (enVoice) utterance.voice = enVoice;
+        }
+      }
+      window.speechSynthesis.speak(utterance);
+    } catch (err) {
+      console.warn('Speech synthesis error:', err);
+    }
+  }, [voiceFeedbackEnabled, hi]);
+
+  // Check Web Speech Recognition support on mount
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (SpeechRecognition) {
+        setVoiceSupported(true);
+      }
+    }
+  }, []);
 
   // Animated Target Loop (60 FPS smooth motion)
   useEffect(() => {
@@ -1891,16 +1961,21 @@ const RedDotPursuitTab: React.FC<{
       for (let x = 0; x < w; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
       for (let y = 0; y < h; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
 
+      const curTesting = isTestingRef.current;
+
       // Moving red dot target position (normalised 0-1)
-      const { x: tx, y: ty } = targetPositionAt(elapsed, pattern, speedHz);
+      // When not testing, target stays stationary at center (0.5, 0.5)
+      const { x: tx, y: ty } = curTesting
+        ? targetPositionAt(elapsed, pattern, speedHz)
+        : { x: 0.5, y: 0.5 };
 
       const dotX = tx * w;
       const dotY = ty * h;
 
-      // Draw moving red dot target
+      // Draw red dot target
       ctx.beginPath();
       ctx.arc(dotX, dotY, 18, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(239, 68, 68, 0.25)';
+      ctx.fillStyle = curTesting ? 'rgba(239, 68, 68, 0.25)' : 'rgba(239, 68, 68, 0.15)';
       ctx.fill();
 
       ctx.beginPath();
@@ -1916,19 +1991,25 @@ const RedDotPursuitTab: React.FC<{
       ctx.fillRect(dotX - 2, dotY - 2, 4, 4);
 
       // Label next to Red Dot
-      ctx.fillStyle = '#f87171';
+      ctx.fillStyle = curTesting ? '#f87171' : '#94a3b8';
       ctx.font = 'bold 11px sans-serif';
-      ctx.fillText('🔴 Target (Look Here)', dotX + 16, dotY + 4);
+      ctx.fillText(
+        curTesting
+          ? (hi ? '🔴 लक्ष्य (यहाँ देखें)' : '🔴 Target (Track With Eyes)')
+          : (hi ? '🔴 लक्ष्य (स्थिर - टेस्ट शुरू करें)' : '🔴 Target (Stationary - Click Start)'),
+        dotX + 16, dotY + 4
+      );
 
       // If testing & camera live: draw patient's gaze position on target canvas & record
       const curLiveData = liveDataRef.current;
-      const curTesting = isTestingRef.current;
 
       if (curLiveData.faceVisible && curLiveData.gazeT !== lastRecordedGazeT) {
         lastRecordedGazeT = curLiveData.gazeT;
 
         const sampleElapsed = (curLiveData.gazeT - startTimeRef.current) / 1000;
-        const paired = targetPositionAt(sampleElapsed, pattern, speedHz);
+        const paired = curTesting
+          ? targetPositionAt(sampleElapsed, pattern, speedHz)
+          : { x: 0.5, y: 0.5 };
 
         // Record waveform point for real-time Eye Position / Eye Tracing Graph
         const sample: EyeTracingPoint = {
@@ -2004,10 +2085,10 @@ const RedDotPursuitTab: React.FC<{
     return () => {
       if (animFrameRef.current !== null) cancelAnimationFrame(animFrameRef.current);
     };
-  }, [pattern, speedHz]);
+  }, [pattern, speedHz, hi]);
 
 
-  const startTest = async () => {
+  const startTest = useCallback(async () => {
     // Bring the camera up before arming the test, otherwise the opening seconds
     // record nothing while the stream and model are still starting.
     if (cameraState !== 'live') await onStartCamera();
@@ -2021,9 +2102,38 @@ const RedDotPursuitTab: React.FC<{
     startTimeRef.current = performance.now();
     setResultScore(null);
     setIsTesting(true);
-  };
+    setTimeLeftSec(60);
 
-  const stopTest = () => {
+    // Start 60-second active test timer countdown
+    if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+    timerIntervalRef.current = setInterval(() => {
+      setTimeLeftSec(prev => {
+        if (prev <= 1) {
+          if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+          stopTestRef.current();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    // Natural Voice Announcement for starting test
+    const startMsg = hi
+      ? (pattern === 'vor-x2'
+          ? '60 सेकंड का VOR x2 गेज़ टेस्ट शुरू हो रहा है। स्क्रीन पर बिंदु के विपरीत दिशा में अपना सिर घुमाएं।'
+          : '60 सेकंड का स्मूथ परस्यूट गेज़ टेस्ट शुरू हो रहा है। अपना सिर स्थिर रखें और लाल बिंदु को अपनी आँखों से फॉलो करें।')
+      : (pattern === 'vor-x2'
+          ? 'Starting 60-second VOR x2 gaze test. Move your head in the opposite direction of the moving red dot.'
+          : 'Starting 60-second smooth pursuit gaze test. Keep your head still and track the moving red dot with your eyes.');
+
+    speakInstruction(startMsg);
+  }, [cameraState, onStartCamera, hi, pattern, speakInstruction]);
+
+  const stopTest = useCallback(() => {
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
+      timerIntervalRef.current = null;
+    }
     setIsTesting(false);
     const targets = targetHistoryRef.current;
     const gazes = gazeHistoryRef.current;
@@ -2038,7 +2148,91 @@ const RedDotPursuitTab: React.FC<{
         ? scoreVOR(gazes, heads)
         : null,
     );
-  };
+
+    // Immediately update waveform samples so eye tracing graph generates instantly
+    setWaveformSamples([...waveformBufferRef.current]);
+
+    // Natural Voice Announcement for stopping test
+    const stopMsg = hi
+      ? 'गेज़ ट्रैकिंग टेस्ट रोक दिया गया है। वेवफॉर्म ग्राफ तैयार किया जा रहा है।'
+      : 'Gaze tracking test stopped. Generating your eye tracing graph now.';
+
+    speakInstruction(stopMsg);
+
+    // Smoothly scroll down to the generated Eye Tracing Waveform Graph
+    setTimeout(() => {
+      eyeTracingGraphRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }, 150);
+  }, [pattern, hi, speakInstruction]);
+
+  const startTestRef = useRef(startTest);
+  const stopTestRef = useRef(stopTest);
+  useEffect(() => { startTestRef.current = startTest; }, [startTest]);
+  useEffect(() => { stopTestRef.current = stopTest; }, [stopTest]);
+
+  // Hands-Free Speech Recognition for Voice Commands ("Start" / "Stop")
+  useEffect(() => {
+    if (!isVoiceCommandActive) {
+      if (recognitionRef.current) {
+        try { recognitionRef.current.stop(); } catch (e) {}
+        recognitionRef.current = null;
+      }
+      return;
+    }
+
+    if (typeof window === 'undefined') return;
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
+
+    const recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = hi ? 'hi-IN' : 'en-US';
+
+    recognition.onresult = (event: any) => {
+      for (let i = 0; i < event.results.length; ++i) {
+        const transcript = event.results[i][0].transcript.toLowerCase().trim();
+        setLastVoiceCommand(transcript);
+
+        const isStartCmd = /(start|begin|go|shuru|शुरू|chalo|चालू|स्टार्ट)/i.test(transcript) || transcript.includes('start');
+        const isStopCmd = /(stop|halt|end|pause|rok|रोकें|score|khatam|खत्म|स्टॉप|finish|done|complete|cancel|enough|terminate|quit|close|band|बंद|रुक|ruk)/i.test(transcript) || transcript.includes('stop') || transcript.includes('score') || transcript.includes('rok') || transcript.includes('khatam') || transcript.includes('done');
+
+        if (isTestingRef.current && isStopCmd) {
+          console.log('Voice Command Triggered STOP:', transcript);
+          stopTestRef.current();
+          break;
+        } else if (!isTestingRef.current && isStartCmd) {
+          console.log('Voice Command Triggered START:', transcript);
+          startTestRef.current();
+          break;
+        }
+      }
+    };
+
+    recognition.onerror = (event: any) => {
+      if (event.error !== 'no-speech') {
+        console.warn('Voice command recognition error:', event.error);
+      }
+    };
+
+    recognition.onend = () => {
+      if (isVoiceCommandActive && recognitionRef.current === recognition) {
+        try { recognition.start(); } catch (e) {}
+      }
+    };
+
+    try {
+      recognition.start();
+      recognitionRef.current = recognition;
+    } catch (e) {
+      console.warn('Failed to start speech recognition', e);
+    }
+
+    return () => {
+      try { recognition.stop(); } catch (e) {}
+      recognitionRef.current = null;
+    };
+  }, [isVoiceCommandActive, hi]);
 
   const symptomEscalation = symptomAfter - symptomBefore;
   const isRuleViolated = symptomEscalation > 2;
@@ -2098,13 +2292,13 @@ const RedDotPursuitTab: React.FC<{
           <div className="bg-white/5 p-3 rounded-xl border border-white/5 space-y-1">
             <span className="font-bold text-teal-300 block">3. {hi ? 'ट्रैकिंग शुरू करें' : 'Follow Red Dot'}</span>
             <p className="text-slate-300 leading-relaxed">
-              {hi ? '"Start Pursuit Test" दबाएं। चलती लाल बिंदु पर नज़र टिकाए रखें (30-60 सेकंड)।' : 'Click "Start Pursuit Test". Keep eyes locked onto the moving red dot for 30–60 seconds.'}
+              {hi ? '"Start Pursuit Test" या वॉयस कमांड से शुरू करें। चलती लाल बिंदु पर नज़र टिकाए रखें (60 सेकंड)।' : 'Click "Start Pursuit Test" or say "Start". Keep eyes locked onto moving dot for 60 seconds.'}
             </p>
           </div>
           <div className="bg-white/5 p-3 rounded-xl border border-white/5 space-y-1">
             <span className="font-bold text-teal-300 block">4. {hi ? 'सुरक्षा नियम' : '2-Point Rule'}</span>
             <p className="text-slate-300 leading-relaxed">
-              {hi ? '"Stop & Score" दबाएं। यदि चक्कर 2 अंक से अधिक बढे तो 15 मिनट विश्राम करें।' : 'Click "Stop & Score". If dizziness increases by >2 points, halt test & rest 15 minutes.'}
+              {hi ? '"Stop & Score" या "Stop" बोलकर टेस्ट रोकें। यदि चक्कर 2 अंक से अधिक बढे तो 15 मिनट विश्राम करें।' : 'Click "Stop & Score" or say "Stop". If dizziness increases by >2 points, halt test & rest 15 minutes.'}
             </p>
           </div>
         </div>
@@ -2117,8 +2311,8 @@ const RedDotPursuitTab: React.FC<{
         <div className="lg:col-span-2 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             {/* Pattern Controls */}
-            <div className="flex gap-1 bg-white/5 p-1 rounded-xl border border-white/10 text-xs font-semibold">
-              {(['horizontal', 'vertical', 'circular', 'vor-x2'] as const).map(p => (
+            <div className="flex flex-wrap gap-1 bg-white/5 p-1 rounded-xl border border-white/10 text-xs font-semibold">
+              {(['horizontal', 'vertical', 'saccadic', 'optokinetic', 'vor-x2'] as const).map(p => (
                 <button
                   key={p}
                   onClick={() => setPattern(p)}
@@ -2126,16 +2320,47 @@ const RedDotPursuitTab: React.FC<{
                     pattern === p ? 'bg-red-600 text-white font-bold' : 'text-slate-400 hover:text-slate-200'
                   }`}
                 >
-                  {p === 'horizontal' ? (hi ? '↔ क्षैतिज' : '↔ Horizontal')
-                    : p === 'vertical' ? (hi ? '↕ लंबवत' : '↕ Vertical')
-                    : p === 'circular' ? (hi ? '🔄 वृत्ताकार' : '🔄 Circular')
+                  {p === 'horizontal' ? (hi ? '↔ स्मूथ परस्यूट (Horizontal)' : '↔ Smooth Pursuit (Horizontal)')
+                    : p === 'vertical' ? (hi ? '↕ स्मूथ परस्यूट (Vertical)' : '↕ Smooth Pursuit (Vertical)')
+                    : p === 'saccadic' ? (hi ? '⚡ सैकैडिक स्टेप (Saccades)' : '⚡ Saccadic Step Test')
+                    : p === 'optokinetic' ? (hi ? '🌀 ऑप्टोकाइनेटिक (OKN 20°/s)' : '🌀 Optokinetic OKN (20°/s)')
                     : (hi ? '🔀 VOR x2' : '🔀 VOR x2')}
                 </button>
               ))}
             </div>
 
-            {/* Test Start / Stop & Calibrate */}
-            <div className="flex gap-2">
+            {/* Test Controls: Start/Stop, Calibrate, Voice Feedback & Voice Command */}
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Voice Feedback Audio Toggle */}
+              <button
+                onClick={() => setVoiceFeedbackEnabled(!voiceFeedbackEnabled)}
+                className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all border ${
+                  voiceFeedbackEnabled
+                    ? 'bg-teal-500/20 border-teal-500/40 text-teal-200 hover:bg-teal-500/30'
+                    : 'bg-slate-800 border-white/10 text-slate-400 hover:text-slate-200'
+                }`}
+                title={hi ? 'प्राकृतिक आवाज़ निर्देश ऑन/ऑफ करें' : 'Toggle natural voice feedback audio prompts'}
+              >
+                {voiceFeedbackEnabled ? <Volume2 className="w-3.5 h-3.5 text-teal-400" /> : <VolumeX className="w-3.5 h-3.5 text-slate-400" />}
+                <span>{voiceFeedbackEnabled ? (hi ? 'आवाज़: ऑन' : 'Voice: On') : (hi ? 'आवाज़: ऑफ' : 'Voice: Off')}</span>
+              </button>
+
+              {/* Voice Command Toggle Button */}
+              {voiceSupported && (
+                <button
+                  onClick={() => setIsVoiceCommandActive(!isVoiceCommandActive)}
+                  className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all border ${
+                    isVoiceCommandActive
+                      ? 'bg-purple-600/30 border-purple-400/50 text-purple-200 hover:bg-purple-600/40 animate-pulse shadow-md shadow-purple-900/30'
+                      : 'bg-slate-800 border-white/10 text-slate-400 hover:text-slate-200'
+                  }`}
+                  title={hi ? 'वॉयस कमांड से "Start" या "Stop" बोलकर टेस्ट नियंत्रित करें' : 'Enable voice commands: say "Start" to begin, "Stop" to halt test hands-free'}
+                >
+                  {isVoiceCommandActive ? <Mic className="w-3.5 h-3.5 text-purple-400 animate-bounce" /> : <MicOff className="w-3.5 h-3.5 text-slate-400" />}
+                  <span>{isVoiceCommandActive ? (hi ? '🎤 वॉयस: एक्टिव' : '🎤 Voice Cmd: Active') : (hi ? '🎙 वॉयस कंट्रोल' : '🎙 Voice Cmd')}</span>
+                </button>
+              )}
+
               {cameraState === 'live' && (
                 <button
                   onClick={onCalibrateGaze}
@@ -2143,9 +2368,10 @@ const RedDotPursuitTab: React.FC<{
                   title={hi ? 'स्क्रीन के केंद्र में देखकर इसे दबाएं' : 'Look at center of screen and click to calibrate zero point'}
                 >
                   <Crosshair className="w-3.5 h-3.5" />
-                  {hi ? '🎯 गेज़ कैलिब्रेट (सेंटर)' : '🎯 Calibrate Gaze (Center)'}
+                  {hi ? '🎯 गेज़ कैलिब्रेट' : '🎯 Calibrate'}
                 </button>
               )}
+
               {!isTesting ? (
                 <button
                   onClick={startTest}
@@ -2166,16 +2392,44 @@ const RedDotPursuitTab: React.FC<{
             </div>
           </div>
 
+          {/* Voice Command Active Hands-Free Status Banner */}
+          {isVoiceCommandActive && (
+            <div className="bg-purple-950/40 border border-purple-500/40 px-3.5 py-2 rounded-xl flex items-center justify-between text-xs text-purple-200 shadow-md">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-purple-400 animate-ping" />
+                <span className="font-semibold">
+                  {hi
+                    ? '🎙 वॉयस कंट्रोल सक्रिय: "Start" (शुरू) या "Stop" (रोकें) बोलें'
+                    : '🎙 Hands-Free Voice Commands Active: Say "Start" to begin or "Stop" to score test'}
+                </span>
+              </div>
+              {lastVoiceCommand && (
+                <span className="text-[11px] font-mono text-purple-300 bg-purple-900/60 px-2.5 py-0.5 rounded-md border border-purple-400/30">
+                  "{lastVoiceCommand}"
+                </span>
+              )}
+            </div>
+          )}
+
           {/* Animated Target Canvas */}
           <div className="relative bg-[#0b0f19] rounded-2xl overflow-hidden border border-white/10 aspect-video flex items-center justify-center shadow-2xl">
-            <canvas ref={targetCanvasRef} className="w-full h-full object-cover" />
+            <canvas ref={targetCanvasRef} className="w-full h-full object-cover z-0" />
 
-            {/* Live Distance Error Badge */}
+            {/* Live Distance Error Badge (Top-Left) */}
             {isTesting && (
-              <div className="absolute top-3 left-3 bg-slate-900/90 border border-teal-500/50 px-3 py-1.5 rounded-xl backdrop-blur-md flex items-center gap-2 text-xs font-mono">
+              <div className="absolute top-3 left-3 bg-slate-900/90 border border-teal-500/50 px-3 py-1.5 rounded-xl backdrop-blur-md flex items-center gap-2 text-xs font-mono z-10 shadow-lg">
                 <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
-                <span className="text-slate-400">{hi ? 'लाइव ट्रैकिंग त्रुटि:' : 'Tracking Error:'}</span>
+                <span className="text-slate-400">{hi ? 'लाइव त्रुटि:' : 'Tracking Error:'}</span>
                 <span className="font-bold text-cyan-300">{liveErrorPct}%</span>
+              </div>
+            )}
+
+            {/* 60-Second Test Countdown Timer Badge (Top-Right) */}
+            {isTesting && (
+              <div className="absolute top-3 right-3 bg-red-950/90 border border-red-500/60 px-3.5 py-1.5 rounded-xl backdrop-blur-md flex items-center gap-2 text-xs font-mono text-red-200 z-10 shadow-lg animate-pulse">
+                <Clock className="w-4 h-4 text-red-400" />
+                <span className="text-slate-400">{hi ? 'समय शेष:' : 'Time Left:'}</span>
+                <span className="font-bold text-white font-mono text-sm">{timeLeftSec}s</span>
               </div>
             )}
           </div>
@@ -2200,23 +2454,34 @@ const RedDotPursuitTab: React.FC<{
 
         {/* Right Col: PIP Webcam & Clinical Dosage Check */}
         <div className="space-y-4">
-          {/* Patient Webcam Camera PIP */}
+          {/* Patient Webcam Camera PIP Card (Non-overlapping layout with collapse toggle) */}
           <div className="bg-white/3 rounded-2xl border border-white/8 p-4 space-y-3">
             <div className="flex items-center justify-between text-xs font-bold text-slate-400">
               <span className="flex items-center gap-1.5"><Camera className="w-4 h-4 text-teal-400" /> {hi ? 'पेशेंट कैमरा फीड' : 'Patient Camera Feed'}</span>
-              {cameraState !== 'live' ? (
-                <button onClick={onStartCamera} className="text-teal-400 hover:underline">{hi ? 'कैमरा चालू करें' : 'Turn On'}</button>
-              ) : (
-                <span className="text-emerald-400">{hi ? '● लाइव' : '● Live'}</span>
-              )}
+              <div className="flex items-center gap-2">
+                {cameraState !== 'live' ? (
+                  <button onClick={onStartCamera} className="text-teal-400 hover:underline">{hi ? 'कैमरा चालू करें' : 'Turn On'}</button>
+                ) : (
+                  <span className="text-emerald-400">{hi ? '● लाइव' : '● Live'}</span>
+                )}
+                <button
+                  onClick={() => setIsCameraMinimized(!isCameraMinimized)}
+                  className="p-1 rounded bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-all"
+                  title={isCameraMinimized ? (hi ? 'कैमरा फैलाएं' : 'Expand Camera') : (hi ? 'कैमरा छोटा करें' : 'Minimize Camera')}
+                >
+                  {isCameraMinimized ? <Maximize2 className="w-3.5 h-3.5" /> : <Minimize2 className="w-3.5 h-3.5" />}
+                </button>
+              </div>
             </div>
 
-            <div className="relative bg-black rounded-xl overflow-hidden aspect-video border border-white/10 flex items-center justify-center">
-              <canvas ref={canvasRef as React.RefObject<HTMLCanvasElement>} className={`w-full h-full object-cover ${cameraState === 'live' ? '' : 'hidden'}`} />
-              {cameraState !== 'live' && (
-                <p className="text-xs text-slate-500 text-center p-4">{hi ? 'कैमरा चालू करें' : 'Camera turned off'}</p>
-              )}
-            </div>
+            {!isCameraMinimized && (
+              <div className="relative bg-black rounded-xl overflow-hidden aspect-video border border-white/10 flex items-center justify-center">
+                <canvas ref={canvasRef as React.RefObject<HTMLCanvasElement>} className={`w-full h-full object-cover ${cameraState === 'live' ? '' : 'hidden'}`} />
+                {cameraState !== 'live' && (
+                  <p className="text-xs text-slate-500 text-center p-4">{hi ? 'कैमरा चालू करें' : 'Camera turned off'}</p>
+                )}
+              </div>
+            )}
           </div>
 
           {/* 2-Point Rule Dosage & Symptom Checker */}
@@ -2301,14 +2566,16 @@ const RedDotPursuitTab: React.FC<{
         </div>
       </div>
 
-      {/* Real-Time Eye Position / Eye Tracing Waveform Graph */}
-      <EyeTracingGraph
-        hi={hi}
-        samples={waveformSamples}
-        pattern={pattern}
-        isTesting={isTesting}
-        cameraState={cameraState}
-      />
+      {/* Real-Time Eye Position / Eye Tracing Waveform Graph (With Scroll Target) */}
+      <div ref={eyeTracingGraphRef} className="scroll-mt-6">
+        <EyeTracingGraph
+          hi={hi}
+          samples={waveformSamples}
+          pattern={pattern}
+          isTesting={isTesting}
+          cameraState={cameraState}
+        />
+      </div>
     </div>
   );
 };

@@ -431,9 +431,12 @@ export function coachingCue(
 
 export type ExerciseKind = 'vor' | 'habituation' | 'repositioning' | 'balance';
 
+export type ExerciseCategory = 'eyes' | 'head_neck' | 'sitting' | 'standing' | 'moving' | 'positioning';
+
 export interface VestibularExercise {
   id: string;
   kind: ExerciseKind;
+  category?: ExerciseCategory;
   code: string;
   titleEn: string;
   titleHi: string;
@@ -448,154 +451,299 @@ export interface VestibularExercise {
   requireAlternation: boolean;
   cautionEn?: string;
   cautionHi?: string;
+  recommendedDurationMinutes?: number;
+  recommendedFrequencyPerDay?: number;
 }
 
 export const EXERCISES: VestibularExercise[] = [
   {
     id: 'vor-x1-horizontal',
     kind: 'vor',
-    code: 'VOR x1 — Horizontal',
-    titleEn: 'Gaze stabilisation, head side to side',
-    titleHi: 'नज़र स्थिर रखकर सिर दाएं-बाएं (VOR x1)',
+    category: 'head_neck',
+    code: 'Head side to side',
+    titleEn: 'Head side to side',
+    titleHi: 'सिर दाएं-बाएं (गैज़ स्टेबिलाइज़ेशन)',
     descEn:
-      'Hold a letter-sized target at arm\'s length. Keep it perfectly sharp while turning your head left and right as fast as you can without the letter blurring.',
+      'Stretch arm out in front with thumb pointing upwards. Turn head smoothly left and right while keeping eyes fixated on your thumb.',
     descHi:
-      'एक अक्षर वाला कार्ड हाथ की दूरी पर पकड़ें। अक्षर धुंधला हुए बिना जितनी तेज़ी से हो सके सिर को दाएं-बाएं घुमाएं।',
+      'अपना अंगूठा ऊपर की दिशा में रखकर हाथ सामने सीधा धरें। नज़र अंगूठे पर रोखकर सिर डावीकडे और उजवीकडे फिराएं।',
     axis: 'yaw',
     targetAngle: 40,
     targetReps: 20,
     velocitySensitive: true,
     requireAlternation: true,
+    recommendedDurationMinutes: 2,
+    recommendedFrequencyPerDay: 4,
   },
   {
     id: 'vor-x1-vertical',
     kind: 'vor',
-    code: 'VOR x1 — Vertical',
-    titleEn: 'Gaze stabilisation, head up and down',
-    titleHi: 'नज़र स्थिर रखकर सिर ऊपर-नीचे (VOR x1)',
+    category: 'head_neck',
+    code: 'Head up and down',
+    titleEn: 'Head up and down',
+    titleHi: 'सिर ऊपर-नीचे (गैज़ स्टेबिलाइज़ेशन)',
     descEn:
-      'Same target, same rule — it must stay readable. Nod the head up and down through a comfortable arc, building speed only as far as clarity allows.',
+      'Stretch arm in front with thumb pointing upwards. Move your head up and down while keeping eyes fixated on your thumb.',
     descHi:
-      'वही कार्ड, वही नियम — अक्षर पढ़ने योग्य रहना चाहिए। सिर को आराम से ऊपर-नीचे झुकाएं, गति उतनी ही बढ़ाएं जितनी स्पष्टता बनी रहे।',
+      'हाथ सामने सीधा रखकर अंगूठे पर नज़र टिकाएं। नज़र अंगूठे पर रोखकर सिर वर और खाली कराएं।',
     axis: 'pitch',
     targetAngle: 30,
     targetReps: 20,
     velocitySensitive: true,
     requireAlternation: true,
-  },
-  {
-    id: 'cervical-roll',
-    kind: 'habituation',
-    code: 'Lateral flexion',
-    titleEn: 'Ear to shoulder, lateral neck flexion',
-    titleHi: 'कान से कंधा — गर्दन का तिरछा झुकाव',
-    descEn:
-      'Tip one ear towards the shoulder without lifting the shoulder, pause at end range, then return through centre to the other side.',
-    descHi:
-      'कंधा उठाए बिना एक कान कंधे की ओर झुकाएं, अंतिम बिंदु पर रुकें, फिर केंद्र से होते हुए दूसरी ओर जाएं।',
-    axis: 'roll',
-    targetAngle: 30,
-    targetReps: 12,
-    velocitySensitive: false,
-    requireAlternation: true,
-  },
-  {
-    id: 'yaw-slow-habituation',
-    kind: 'habituation',
-    code: 'Habituation — slow yaw',
-    titleEn: 'Slow provoking head turns (habituation)',
-    titleHi: 'धीमे उकसाने वाले सिर घुमाव (हैबिचुएशन)',
-    descEn:
-      'Deliberately slow, full-range head turns into the direction that provokes symptoms. Mild dizziness is expected and is the point — it should settle within 30 seconds.',
-    descHi:
-      'लक्षण उकसाने वाली दिशा में जान-बूझकर धीमे, पूरे दायरे के सिर घुमाव। हल्का चक्कर आना अपेक्षित है और यही उद्देश्य है — यह 30 सेकंड में शांत हो जाना चाहिए।',
-    axis: 'yaw',
-    targetAngle: 55,
-    targetReps: 10,
-    velocitySensitive: false,
-    requireAlternation: true,
-    cautionEn: 'Sit down for this drill until you have done it safely three times.',
-    cautionHi: 'जब तक आप इसे तीन बार सुरक्षित न कर लें, बैठकर ही करें।',
-  },
-  {
-    id: 'cervical-rom-check',
-    kind: 'habituation',
-    code: 'ROM assessment',
-    titleEn: 'Cervical range of motion check',
-    titleHi: 'गर्दन के दायरे (ROM) की जांच',
-    descEn:
-      'One slow sweep to each end range on every axis. The coach records your maximum yaw, pitch, and roll so progress across weeks is measurable.',
-    descHi:
-      'हर अक्ष पर अंतिम सीमा तक एक धीमी गति। कोच आपका अधिकतम यॉ, पिच और रोल दर्ज करता है ताकि हफ्तों की प्रगति मापी जा सके।',
-    axis: 'yaw',
-    targetAngle: 60,
-    targetReps: 6,
-    velocitySensitive: false,
-    requireAlternation: true,
-  },
-  {
-    id: 'vor-x2-opposing',
-    kind: 'vor',
-    code: 'VOR x2 — Opposing Motion',
-    titleEn: 'Advanced gaze stabilization (head & target move in opposite directions)',
-    titleHi: 'उन्नत गेज़ स्टेबिलाइजेशन — सिर व कार्ड विपरीत दिशा में (VOR x2)',
-    descEn:
-      'Move target card to the left while turning head to the right simultaneously. The target and head move in opposite directions while keeping gaze locked.',
-    descHi:
-      'कार्ड को बाईं ओर ले जाते हुए सिर को दाईं ओर घुमाएं। नज़र कार्ड पर टिकाकर सिर और कार्ड को विपरीत दिशा में चलाएं।',
-    axis: 'yaw',
-    targetAngle: 35,
-    targetReps: 16,
-    velocitySensitive: true,
-    requireAlternation: true,
-  },
-  {
-    id: 'vor-cancellation',
-    kind: 'vor',
-    code: 'VOR Cancellation',
-    titleEn: 'Visual pursuit & VOR suppression (head and target move together)',
-    titleHi: 'दृष्टि अनुगमन व VOR दमन — सिर व कार्ड एक साथ',
-    descEn:
-      'Hold target in front at eye level. Turn head and target together to the left and right at the same speed, maintaining gaze fixed on the target.',
-    descHi:
-      'कार्ड को सामने आंख के स्तर पर रखें। सिर और कार्ड को एक ही गति से एक साथ दाएं-बाएं घुमाएं, नज़र कार्ड पर टिकाए रखें।',
-    axis: 'yaw',
-    targetAngle: 45,
-    targetReps: 12,
-    velocitySensitive: false,
-    requireAlternation: true,
+    recommendedDurationMinutes: 2,
+    recommendedFrequencyPerDay: 4,
   },
   {
     id: 'cawthorne-diagonal',
     kind: 'habituation',
-    code: 'Cawthorne 45° Diagonal',
-    titleEn: 'Diagonal head nod (45° Semicircular canal orientation)',
-    titleHi: 'तिरछा सिर झुकाव (45° अर्धवृत्ताकार नहरों के लिए)',
+    category: 'head_neck',
+    code: 'Head 45 degree',
+    titleEn: 'Head 45 degree',
+    titleHi: '45 डिग्री सिर झुकाव (अर्धवृत्ताकार नहर अभ्यास)',
     descEn:
-      'Turn head 45° to one side then nod up and down. This targets the anterior and posterior semicircular canals for BPPV habituation.',
+      'Turn head 45° to one side then nod up and down. Targets anterior and posterior semicircular canals for vertigo habituation.',
     descHi:
       'सिर को 45° एक तरफ घुमाकर ऊपर-नीचे झुकाएं। यह बीपीपीवी हैबिचुएशन के लिए अग्र व पश्च नहरों को लक्षित करता है।',
     axis: 'pitch',
     targetAngle: 35,
+    targetReps: 15,
+    velocitySensitive: false,
+    requireAlternation: true,
+    recommendedDurationMinutes: 2,
+    recommendedFrequencyPerDay: 3,
+  },
+  {
+    id: 'eyes-focus-finger',
+    kind: 'vor',
+    category: 'eyes',
+    code: 'Focus on finger',
+    titleEn: 'Eyes focus on finger with arm outstretched',
+    titleHi: 'हाथ फैलाकर उंगली पर नज़र केंद्रित करें',
+    descEn:
+      'Focus on your finger moving towards and away from your face, or let eyes converge at the nose site to train visual tracking.',
+    descHi:
+      'चेहऱ्याच्या दिशेने येणाऱ्या आणि विरुद्ध दिशेने जाणाऱ्या बोटावर लक्ष केंद्रित करा।',
+    axis: null,
+    targetAngle: 0,
+    targetReps: 15,
+    velocitySensitive: false,
+    requireAlternation: false,
+    recommendedDurationMinutes: 2,
+    recommendedFrequencyPerDay: 3,
+  },
+  {
+    id: 'eye-roll-up-down',
+    kind: 'vor',
+    category: 'eyes',
+    code: 'Eye Roll Up/Down',
+    titleEn: 'Roll eyes up and down',
+    titleHi: 'आंखें ऊपर-नीचे घुमाएं',
+    descEn:
+      'Keep head stationary while looking up as far as comfortably possible, then down towards your chin.',
+    descHi:
+      'सिर स्थिर रखकर आंखों को ऊपर और नीचे की ओर बारी-बारी से घुमाएं।',
+    axis: null,
+    targetAngle: 0,
+    targetReps: 15,
+    velocitySensitive: false,
+    requireAlternation: true,
+    recommendedDurationMinutes: 1,
+    recommendedFrequencyPerDay: 3,
+  },
+  {
+    id: 'eye-alternate-left-right',
+    kind: 'vor',
+    category: 'eyes',
+    code: 'Eye Left/Right',
+    titleEn: 'Look left and right alternatively',
+    titleHi: 'आंखें दाएं-बाएं बारी-बारी देखें',
+    descEn:
+      'Keep head completely still. Move eyes smoothly from extreme left to extreme right.',
+    descHi:
+      'आळीपाळीने उजवीकडे आणि डावीकडे बघा। सिर बिना हिलाए केवल आंखों से देखें।',
+    axis: null,
+    targetAngle: 0,
+    targetReps: 15,
+    velocitySensitive: false,
+    requireAlternation: true,
+    recommendedDurationMinutes: 1,
+    recommendedFrequencyPerDay: 3,
+  },
+  {
+    id: 'standing-exercise',
+    kind: 'balance',
+    category: 'standing',
+    code: 'Standing exercise',
+    titleEn: 'Standing exercise',
+    titleHi: 'उठे रहने का अभ्यास (आंखें खुली व बंद)',
+    descEn:
+      'Maintain balance while standing with feet close together. Practice initially with eyes open and then eyes shut alternately for 15 reps.',
+    descHi:
+      'पैर पास रखकर खड़े हों। आधी डोळे उघडे ठेवून आणि मग बंद करून उठबस या उभे राहा।',
+    axis: null,
+    targetAngle: 0,
+    targetReps: 15,
+    velocitySensitive: false,
+    requireAlternation: true,
+    cautionEn: 'Perform near a wall or study table for support if feeling unsteady.',
+    cautionHi: 'असंतुलित महसूस होने पर सहारा लेने के लिए दीवार के पास करें।',
+    recommendedDurationMinutes: 2,
+    recommendedFrequencyPerDay: 3,
+  },
+  {
+    id: 'sitting-up-and-down',
+    kind: 'balance',
+    category: 'sitting',
+    code: 'Sitting up and down',
+    titleEn: 'Sitting up and down',
+    titleHi: 'बैठकर उठने का अभ्यास',
+    descEn:
+      'Change from sitting to standing and sit back down, initially with eyes open and then eyes closed. Build up to 15 repetitions.',
+    descHi:
+      'उठबस करा और मध्य में गोल फिरें। आंखें खुली रखकर और बंद रखकर बैठकर उठें।',
+    axis: null,
+    targetAngle: 0,
+    targetReps: 15,
+    velocitySensitive: false,
+    requireAlternation: true,
+    recommendedDurationMinutes: 2,
+    recommendedFrequencyPerDay: 3,
+  },
+  {
+    id: 'walking-flat-surface',
+    kind: 'balance',
+    category: 'moving',
+    code: 'Walking flat surface',
+    titleEn: 'Walking on a flat surface',
+    titleHi: 'समतल सतह पर चलना',
+    descEn:
+      'Walk across the room in a straight line with eyes open then closed. Turn head to one side after three steps and opposite side after three steps.',
+    descHi:
+      'एक सरळ रेषेत चाला। चालताना तीन पावलांनंतर डोके एका बाजूला वळवा आणि नंतर तीन पावलांनंतर दुसऱ्या बाजूला।',
+    axis: null,
+    targetAngle: 0,
+    targetReps: 10,
+    velocitySensitive: false,
+    requireAlternation: true,
+    recommendedDurationMinutes: 3,
+    recommendedFrequencyPerDay: 3,
+  },
+  {
+    id: 'walking-uneven-surface',
+    kind: 'balance',
+    category: 'moving',
+    code: 'Uneven surface walk',
+    titleEn: 'Walking on an uneven surface',
+    titleHi: 'असमान सतह या गद्दी पर चलना',
+    descEn:
+      'Walk up and down steps or maintain balance standing on a soft mattress/firm cushion with eyes open then eyes closed.',
+    descHi:
+      'पायऱ्या चढा आणि उतरा किंवा मऊ गादीवर उभे राहून तोल सावरा।',
+    axis: null,
+    targetAngle: 0,
+    targetReps: 10,
+    velocitySensitive: false,
+    requireAlternation: true,
+    recommendedDurationMinutes: 3,
+    recommendedFrequencyPerDay: 2,
+  },
+  {
+    id: 'walking-heel-to-toe',
+    kind: 'balance',
+    category: 'moving',
+    code: 'Heel-to-toe walk',
+    titleEn: 'Walking heel-to-toe',
+    titleHi: 'एड़ी से पंजा मिलाकर चलना (टैंडम वॉक)',
+    descEn:
+      'Maintain balance while standing or walking with arms crossed in front of chest and feet placed in a single line (one in front of another).',
+    descHi:
+      'हाताची घडी घालून तोल सावरून उभे राहा / एड़ी से पंजा मिलाकर एक लाइन में चलें।',
+    axis: null,
+    targetAngle: 0,
     targetReps: 12,
     velocitySensitive: false,
     requireAlternation: true,
+    recommendedDurationMinutes: 2,
+    recommendedFrequencyPerDay: 3,
+  },
+  {
+    id: 'sit-and-lean-exercise',
+    kind: 'habituation',
+    category: 'sitting',
+    code: 'Sit and lean',
+    titleEn: 'Sit and lean exercise',
+    titleHi: 'बैठकर आगे झुकने व तिरछे होने का अभ्यास',
+    descEn:
+      'Sit in a chair, bend forward and pick up objects from the floor, then return upright and turn head and trunk alternatively left and right.',
+    descHi:
+      'पुढे वाका आणि वस्तू उचला। डोके आणि धड आळीपाळीने उजवीकडे व डावीकडे वळवा।',
+    axis: null,
+    targetAngle: 0,
+    targetReps: 12,
+    velocitySensitive: false,
+    requireAlternation: true,
+    recommendedDurationMinutes: 2,
+    recommendedFrequencyPerDay: 3,
+  },
+  {
+    id: 'rolling-exercise',
+    kind: 'repositioning',
+    category: 'positioning',
+    code: 'Rolling exercise',
+    titleEn: 'Rolling exercise',
+    titleHi: 'करवट बदलने और रोलिंग का अभ्यास (Brandt-Daroff)',
+    descEn:
+      'Sit upright on bed with head turned 45°. Drop to left side until head touches bed, wait 60 sec, then move to right side with forehead resting on bed.',
+    descHi:
+      'पलंगावर ताठ बसा, डोके 45° वळवा। डाव्या बाजूला पडा (६० सेकंद थांबवा), मग दुसऱ्या बाजूला पडा।',
+    axis: null,
+    targetAngle: 0,
+    targetReps: 5,
+    velocitySensitive: false,
+    requireAlternation: true,
+    cautionEn: 'Perform 3 times in morning, noon, and night until free from positional vertigo for 24 hours.',
+    cautionHi: 'सुबह, दोपहर, रात दिन में 3 बार करें।',
+    recommendedDurationMinutes: 5,
+    recommendedFrequencyPerDay: 3,
   },
   {
     id: 'cervicogenic-shrug',
     kind: 'habituation',
-    code: 'Cervicogenic Shrug',
-    titleEn: 'Shoulder elevation & chin tuck (Cervico-ocular reflex)',
-    titleHi: 'कंधे उठाना व ठोड़ी दबाना (गर्दन-आंख रिफ्लेक्स)',
+    category: 'sitting',
+    code: 'Shoulder Shrug',
+    titleEn: 'Shrugging and rotating shoulders',
+    titleHi: 'कंधे उठाना व गोल घुमाना',
     descEn:
-      'Elevate shoulders smoothly towards your ears while tucking your chin slightly inward, hold for 2 seconds, and release to relieve cervical-vestibular muscle tension.',
+      'Elevate shoulders smoothly towards ears while tucking chin slightly inward, hold for 2 seconds, and release to relieve cervical-vestibular muscle tension.',
     descHi:
-      'ठोड़ी को अंदर दबाते हुए कंधों को कानों की ओर उठाएं, 2 सेकंड रोकें और छोड़ें ताकि गर्दन की मांसपेशियों का तनाव दूर हो।',
+      'खांदे वरखाली करा (खांदे उडवा) आणि गोल फिरवा। ठोड़ी अंदर दबाएं।',
     axis: 'pitch',
     targetAngle: 25,
-    targetReps: 10,
+    targetReps: 12,
     velocitySensitive: false,
     requireAlternation: false,
+    recommendedDurationMinutes: 2,
+    recommendedFrequencyPerDay: 4,
+  },
+  {
+    id: 'ball-coordination',
+    kind: 'balance',
+    category: 'moving',
+    code: 'Ball Throw',
+    titleEn: 'Throwing & catching ball hand-to-hand',
+    titleHi: 'हाथों से गेंद फेंकना व पकड़ना',
+    descEn:
+      'Throw a small ball in an arc shape from one hand to another above eye level or under knee, following the ball with eyes while walking or standing.',
+    descHi:
+      'एक छोटा चेंडू एका हाताने डोक्यावरून कमानित दुसऱ्या हाताकडे फेका आणि नजर चेंडूवर ठेवा।',
+    axis: null,
+    targetAngle: 0,
+    targetReps: 15,
+    velocitySensitive: false,
+    requireAlternation: true,
+    recommendedDurationMinutes: 3,
+    recommendedFrequencyPerDay: 2,
   },
 ];
 

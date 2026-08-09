@@ -3,20 +3,22 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   RotateCcw, Play, Pause, RefreshCw, CheckCircle2, AlertTriangle, Camera,
-  ClipboardCheck, Footprints, SkipForward, Volume2, VolumeX, Save, Check, Ear,
+  ClipboardCheck, Footprints, SkipForward, Volume2, VolumeX, Save, Check, Ear, Activity,
 } from 'lucide-react';
 import { useAppData } from '@/lib/app-data-context';
 import { AIVertigoRehabCoach } from './AIVertigoRehabCoach';
 import { VestibularDhiInventory } from './VestibularDhiInventory';
+import { VertigoExerciseLibrary } from './VertigoExerciseLibrary';
 import {
   MANOEUVRES, renderInstruction, manoeuvreDuration,
   loadProfile, saveProfile, loadSessions, saveSession, summariseAdherence,
   type Manoeuvre, type Side, type VestibularSession,
 } from '@/lib/vestibular-rx';
 
-type Tab = 'coach' | 'manoeuvre' | 'balance' | 'assessment';
+type Tab = 'exercises' | 'coach' | 'manoeuvre' | 'balance' | 'assessment';
 
 const TABS: Array<{ id: Tab; icon: React.ElementType; en: string; hi: string }> = [
+  { id: 'exercises', icon: Activity, en: 'Vertigo exercises', hi: 'चक्कर अभ्यास' },
   { id: 'coach', icon: Camera, en: 'AI camera coach', hi: 'एआई कैमरा कोच' },
   { id: 'manoeuvre', icon: Ear, en: 'BPPV manoeuvres', hi: 'बीपीपीवी पैंतरे' },
   { id: 'balance', icon: Footprints, en: 'Balance & gait', hi: 'संतुलन व चाल' },
@@ -71,7 +73,11 @@ export const VestibularRehabGuide: React.FC = () => {
   const { locale } = useAppData();
   const hi = locale === 'hi';
 
-  const [tab, setTab] = useState<Tab>('coach');
+  const [tab, setTab] = useState<Tab>('exercises');
+
+  const handleLaunchCoach = (exId: string) => {
+    setTab('coach');
+  };
 
   return (
     <div className="space-y-6 page-enter">
@@ -86,8 +92,8 @@ export const VestibularRehabGuide: React.FC = () => {
           </h1>
           <p className="text-teal-50/90 text-xs md:text-sm leading-relaxed">
             {hi
-              ? 'बीपीपीवी, वेस्टिबुलर न्यूराइटिस और लगातार चक्कर के लिए: कैमरा-आधारित गेज़ स्टेबिलाइजेशन कोच, समयबद्ध एपली व ब्रांट-डैरोफ पैंतरे, संतुलन अभ्यास और DHI-25 आकलन।'
-              : 'For BPPV, vestibular neuritis and persistent dizziness: a camera-based gaze-stabilisation coach, timed Epley and Brandt-Daroff manoeuvres, balance progressions, and the DHI-25.'}
+              ? 'बीपीपीवी, वेस्टिबुलर न्यूराइटिस और लगातार चक्कर के लिए: भारतीय मॉडल आधारित चक्कर अभ्यास, कैमरा-आधारित गेज़ स्टेबिलाइजेशन कोच, समयबद्ध एपली व ब्रांट-डैरोफ पैंतरे और DHI-25 आकलन।'
+              : 'For BPPV, vestibular neuritis and persistent dizziness: an Indian female subject exercise guide, camera-based gaze-stabilisation coach, timed Epley & Brandt-Daroff manoeuvres, and the DHI-25.'}
           </p>
         </div>
       </header>
@@ -119,6 +125,7 @@ export const VestibularRehabGuide: React.FC = () => {
       </div>
 
       <div role="tabpanel" id={`vrt-panel-${tab}`} aria-labelledby={`vrt-tab-${tab}`}>
+        {tab === 'exercises' && <VertigoExerciseLibrary onLaunchCoach={handleLaunchCoach} />}
         {tab === 'coach' && <AIVertigoRehabCoach />}
         {tab === 'manoeuvre' && <ManoeuvrePlayer />}
         {tab === 'balance' && <BalanceDrills />}
@@ -130,7 +137,7 @@ export const VestibularRehabGuide: React.FC = () => {
       </div>
     </div>
   );
-};
+}
 
 /* ------------------------------------------------------- manoeuvre player */
 

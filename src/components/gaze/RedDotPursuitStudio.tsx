@@ -100,8 +100,16 @@ export const RedDotPursuitTab: React.FC<{
   const headHistoryRef = useRef<Array<{ t: number; yaw: number }>>([]);
   const lastErrorSyncRef = useRef<number>(0);
 
+  // Calibration Guided States & Voice Feedback
+  const [isCalibratingCenter, setIsCalibratingCenter] = useState(false);
+  const [calibrationSuccessBadge, setCalibrationSuccessBadge] = useState<string | null>(null);
+  const isCalibratingCenterRef = useRef(false);
+  const calibrationSuccessBadgeRef = useRef<string | null>(null);
+
   useEffect(() => { liveDataRef.current = liveData; }, [liveData]);
   useEffect(() => { isTestingRef.current = isTesting; }, [isTesting]);
+  useEffect(() => { isCalibratingCenterRef.current = isCalibratingCenter; }, [isCalibratingCenter]);
+  useEffect(() => { calibrationSuccessBadgeRef.current = calibrationSuccessBadge; }, [calibrationSuccessBadge]);
 
   useEffect(() => {
     return () => {
@@ -133,6 +141,31 @@ export const RedDotPursuitTab: React.FC<{
       console.warn('Speech synthesis error:', err);
     }
   }, [voiceFeedbackEnabled, hi]);
+
+  const handleCalibrateWithVoice = useCallback(() => {
+    if (isCalibratingCenter) return;
+    setIsCalibratingCenter(true);
+
+    const startMsg = hi
+      ? 'सेंटर गेज़ कैलिब्रेट हो रहा है। स्क्रीन के मध्य लाल बिंदु पर सीधे देखें।'
+      : 'Calibrating center gaze. Look directly at the red center target.';
+    speakInstruction(startMsg);
+
+    setTimeout(() => {
+      if (onCalibrateGaze) onCalibrateGaze();
+      setIsCalibratingCenter(false);
+
+      const completeMsg = hi
+        ? 'कैलिब्रेशन पूरा हुआ। जीरो पॉइंट सेट हो गया है।'
+        : 'Calibration complete. Zero point centered successfully.';
+      speakInstruction(completeMsg);
+
+      setCalibrationSuccessBadge(
+        hi ? '✓ गेज़ कैलिब्रेटेड (0° Center)' : '✓ Gaze Calibrated at 0° Center'
+      );
+      setTimeout(() => setCalibrationSuccessBadge(null), 4000);
+    }, 1500);
+  }, [hi, isCalibratingCenter, onCalibrateGaze, speakInstruction]);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -317,6 +350,45 @@ export const RedDotPursuitTab: React.FC<{
           }
         }
       }
+
+      if (isCalibratingCenterRef.current) {
+        ctx.save();
+        const pulseR = 24 + Math.sin(now / 150) * 6;
+        ctx.beginPath();
+        ctx.arc(w / 2, h / 2, pulseR, 0, Math.PI * 2);
+        ctx.strokeStyle = '#22d3ee';
+        ctx.lineWidth = 3;
+        ctx.shadowColor = '#22d3ee';
+        ctx.shadowBlur = 15;
+        ctx.stroke();
+
+        ctx.fillStyle = 'rgba(6, 182, 212, 0.9)';
+        ctx.roundRect(w / 2 - 180, h / 2 + 40, 360, 32, 10);
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(
+          hi ? '🎯 कैलिब्रेट हो रहा है... लाल बिंदु पर देखें' : '🎯 CALIBRATING GAZE — Look at red dot...',
+          w / 2,
+          h / 2 + 60
+        );
+        ctx.restore();
+      }
+
+      if (calibrationSuccessBadgeRef.current) {
+        ctx.save();
+        ctx.fillStyle = 'rgba(16, 185, 129, 0.9)';
+        ctx.shadowColor = 'rgba(16, 185, 129, 0.5)';
+        ctx.shadowBlur = 10;
+        ctx.roundRect(w / 2 - 160, 16, 320, 32, 10);
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(calibrationSuccessBadgeRef.current, w / 2, 36);
+        ctx.restore();
+      }
     };
 
     render();
@@ -340,11 +412,12 @@ export const RedDotPursuitTab: React.FC<{
       return;
     }
 
-    waveformBufferRef.current = [];
-    setWaveformSamples([]);
-    targetHistoryRef.current = [];
     gazeHistoryRef.current = [];
     headHistoryRef.current = [];
+    targetHistoryRef.current = [];
+    waveformBufferRef.current = [];
+    setWaveformSamples([]);
+
     testStartRef.current = performance.now();
     startTimeRef.current = performance.now();
     setResultScore(null);
@@ -494,6 +567,8 @@ export const RedDotPursuitTab: React.FC<{
           if (!isTestingRef.current) startTest();
         } else if (transcript.includes('stop') || transcript.includes('रोक') || transcript.includes('हाल्ट') || transcript.includes('पॉज़')) {
           if (isTestingRef.current) stopTest();
+        } else if (transcript.includes('calibrate') || transcript.includes('कैलिब्रेट')) {
+          handleCalibrateWithVoice();
         } else if (transcript.includes('faster') || transcript.includes('तेज़') || transcript.includes('स्पीड बढ़ाओ')) {
           setSpeedHz(prev => Math.min(prev + 0.1, 1.2));
         } else if (transcript.includes('slower') || transcript.includes('धीरे') || transcript.includes('स्पीड कम करो')) {
@@ -573,7 +648,7 @@ export const RedDotPursuitTab: React.FC<{
                   ? 'bg-purple-600 text-white border-purple-400 animate-pulse'
                   : 'bg-white/5 text-slate-300 border-white/10 hover:bg-white/10'
               }`}
-              title={hi ? 'वॉयस कमांड ("Start", "Stop")' : 'Hands-free Voice Commands ("Start", "Stop")'}
+              title={hi ? 'वॉयस कमांड ("Start", "Stop", "Calibrate")' : 'Hands-free Voice Commands ("Start", "Stop", "Calibrate")'}
             >
               {isVoiceCommandActive ? <Mic className="w-4 h-4 text-white" /> : <MicOff className="w-4 h-4 text-purple-400" />}
               <span className="hidden sm:inline">{isVoiceCommandActive ? (hi ? 'सुन रहा है...' : 'Listening...') : (hi ? '🎤 वॉयस कमांड' : '🎤 Voice Cmd')}</span>

@@ -778,6 +778,16 @@ export const TinnitusReliefStudio: React.FC = () => {
                     <button onClick={() => nudgeFrequency(2)} className="btn-outline text-xs py-2">{hi ? 'बहुत ऊपर' : 'Much higher'}</button>
                   </div>
 
+                  <RangeRow
+                    label={hi ? 'ध्वनि तीव्रता (डेसिबल)' : 'Sound intensity (dB)'}
+                    readout={`${levelDb} dB`}
+                    min={AUDIO_LIMITS.MIN_LEVEL_DB}
+                    max={AUDIO_LIMITS.MAX_LEVEL_DB}
+                    value={levelDb}
+                    onChange={setLevelDb}
+                    hint={hi ? 'सापेक्ष पैमाना — केवल इतना तेज़ रखें कि टोन आराम से सुनाई दे।' : 'Relative scale — keep it just loud enough to hear the tone comfortably.'}
+                  />
+
                   <div className="flex flex-col sm:flex-row gap-3">
                     <button onClick={togglePitchTone} className="btn-navy flex-1 inline-flex items-center justify-center gap-2">
                       {playingMode === 'pitch' ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 fill-current" />}

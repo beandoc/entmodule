@@ -618,10 +618,10 @@ export const EXERCISES: VestibularExercise[] = [
     descHi:
       'सिर को 45° एक तरफ घुमाकर ऊपर-नीचे झुकाएं। यह बीपीपीवी हैबिचुएशन के लिए अग्र व पश्च नहरों को लक्षित करता है।',
     axis: 'pitch',
-    targetAngle: 35,
+    targetAngle: 20,
     targetReps: 15,
     velocitySensitive: false,
-    requireAlternation: true,
+    requireAlternation: false,
     recommendedDurationMinutes: 2,
     recommendedFrequencyPerDay: 3,
   },

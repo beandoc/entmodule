@@ -218,7 +218,7 @@ export async function openCamera(video: HTMLVideoElement): Promise<CameraHandle>
         facingMode: 'user',
         width: { ideal: 1280 },
         height: { ideal: 720 },
-        frameRate: { ideal: 60, min: 30 },
+        frameRate: { ideal: 120, min: 60 },
       },
       audio: false,
     });
@@ -228,7 +228,7 @@ export async function openCamera(video: HTMLVideoElement): Promise<CameraHandle>
     if (name === 'NotAllowedError' || name === 'SecurityError') throw err;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'user', frameRate: { ideal: 60, min: 30 } },
+        video: { facingMode: 'user', frameRate: { ideal: 120, min: 60 } },
         audio: false,
       });
     } catch {

@@ -393,8 +393,8 @@ export function extractGazeFromLandmarks(
 
   // Zero-point calibration offset
   // Raw pupil offsets are displacement ratios typically within [-0.3, +0.3]
-  let zeroX = avgOffsetX;
-  let zeroY = avgOffsetY;
+  let zeroX = 0.0;
+  let zeroY = 0.0;
   if (neutralOffset) {
     // Safety guard: if neutralOffset was passed as normalized screen coords (> 0.35), ignore it
     if (Math.abs(neutralOffset.x) < 0.35 && Math.abs(neutralOffset.y) < 0.35) {
@@ -416,37 +416,25 @@ export function extractGazeFromLandmarks(
     deltaY += pitchComp;
   }
 
-  // Gain scaling factor: 10.0x horizontal, 10.0x vertical to project eye rotation across full screen
-  const GAZE_GAIN_X = 10.0;
-  const GAZE_GAIN_Y = 10.0;
+  // Automatic Distance-Adaptive Gain Scaling:
+  // Dynamically adjusts gain so sitting at 40cm, 55cm, or 80cm produces identical full-amplitude tracking.
+  const ipdNorm = Math.hypot(rPupil.x - lPupil.x, rPupil.y - lPupil.y);
+  const estDistanceCm = ipdNorm > 0.02 ? Math.min(Math.max((0.11 / ipdNorm) * 55, 30), 110) : 55;
+  const distScale = estDistanceCm / 55.0;
 
-  const gazeX = Math.min(Math.max(0.5 - deltaX * GAZE_GAIN_X, 0.02), 0.98);
+  // Gain scaling factor: 1.8x base x distScale to project eye rotation cleanly across [0.15, 0.85] without border clamping
+  const GAZE_GAIN_X = 1.8 * distScale;
+  const GAZE_GAIN_Y = 1.8 * distScale;
+
+  const gazeX = Math.min(Math.max(0.5 + deltaX * GAZE_GAIN_X, 0.02), 0.98);
   const gazeY = Math.min(Math.max(0.5 + deltaY * GAZE_GAIN_Y, 0.02), 0.98);
 
-  // Baseline Auto-Centered Left vs Right eye position tracking (centered at 0.5 ~ 0° Center)
-  // Subtract static intra-ocular offset so both eyes rest at 0.5 (0° Center) during neutral gaze
-  const lDevX = lOffsetX - zeroX - (lOffsetX - avgOffsetX);
-  const rDevX = rOffsetX - zeroX - (rOffsetX - avgOffsetX);
-  const lDevY = lOffsetY - zeroY - (lOffsetY - avgOffsetY);
-  const rDevY = rOffsetY - zeroY - (rOffsetY - avgOffsetY);
-
-  let lRotX = lDevX;
-  let rRotX = rDevX;
-  let lRotY = lDevY;
-  let rRotY = rDevY;
-  if (headPose) {
-    const yawComp = (headPose.yaw / 45) * 0.12;
-    const pitchComp = (headPose.pitch / 45) * 0.12;
-    lRotX -= yawComp;
-    rRotX -= yawComp;
-    lRotY += pitchComp;
-    rRotY += pitchComp;
-  }
-
-  const lGazeX = Math.min(Math.max(0.5 - lRotX * GAZE_GAIN_X, 0.02), 0.98);
-  const rGazeX = Math.min(Math.max(0.5 - rRotX * GAZE_GAIN_X, 0.02), 0.98);
-  const lGazeY = Math.min(Math.max(0.5 + lRotY * GAZE_GAIN_Y, 0.02), 0.98);
-  const rGazeY = Math.min(Math.max(0.5 + rRotY * GAZE_GAIN_Y, 0.02), 0.98);
+  // Conjugate Left vs Right eye position tracking (centered at 0.5 ~ 0° Center)
+  // Both eyes track relative to the combined gaze displacement deltaX / deltaY
+  const lGazeX = gazeX;
+  const rGazeX = gazeX;
+  const lGazeY = gazeY;
+  const rGazeY = gazeY;
   const eyeDisagreement = Math.abs(lGazeX - rGazeX);
 
   // Confidence calculation
@@ -1614,6 +1602,26 @@ function interpolateTargetXY(
   return null;
 }
 
+export function alignTimeSeriesBaselines<T extends { t: number }, G extends { t: number }>(
+  targets: T[],
+  gazes: G[]
+): { alignedTargets: T[]; alignedGazes: G[] } {
+  if (targets.length === 0 || gazes.length === 0) {
+    return { alignedTargets: targets, alignedGazes: gazes };
+  }
+
+  const t0Target = targets[0].t;
+  const t0Gaze = gazes[0].t;
+  const offsetMs = t0Gaze - t0Target;
+
+  if (Math.abs(offsetMs) < 10) {
+    return { alignedTargets: targets, alignedGazes: gazes };
+  }
+
+  const alignedGazes = gazes.map((g) => ({ ...g, t: g.t - offsetMs }));
+  return { alignedTargets: targets, alignedGazes };
+}
+
 /**
  * Score a Smooth Pursuit / Moving Red-Dot Test session.
  * Compares actual gaze series against moving dot target series.
@@ -1635,43 +1643,47 @@ export function scoreSmoothPursuit(
     };
   }
 
+  const { alignedTargets, alignedGazes } = alignTimeSeriesBaselines(targetSeries, gazeSeries);
+  const targetsToUse = alignedTargets;
+  const gazesToUse = alignedGazes;
+
   let totalError = 0;
   let sampleCount = 0;
 
-  // Least-squares gain and cosine-similarity agreement both fall out of the
-  // same three running sums over the 2D velocity vectors, so both are
-  // accumulated in one pass rather than reducing to unsigned magnitude first
-  // (which is what threw away direction in the previous implementation).
   let sumDot = 0;
   let sumTgtSq = 0;
   let sumGazeSq = 0;
 
-  for (let i = 1; i < targetSeries.length; i++) {
-    const tgt = targetSeries[i];
-    const prevTgt = targetSeries[i - 1];
-    const dt = (tgt.t - prevTgt.t) / 1000;
-    const tvx = (tgt.x - prevTgt.x) / dt;
-    const tvy = (tgt.y - prevTgt.y) / dt;
+  for (let i = 1; i < targetsToUse.length - 1; i++) {
+    const tgt = targetsToUse[i];
+    const tNext = tgt.t + 25;
+    const tPrev = tgt.t - 25;
+
+    const gazeNext = interpolateGaze(gazesToUse, tNext);
+    const gazePrev = interpolateGaze(gazesToUse, tPrev);
+    const tgtNext = interpolateTargetXY(targetsToUse, tNext);
+    const tgtPrev = interpolateTargetXY(targetsToUse, tPrev);
+
+    if (!gazeNext || !gazePrev || !tgtNext || !tgtPrev) continue;
+
+    const windowDtSec = 0.050; // 50ms central difference baseline
+    const tvx = (tgtNext.x - tgtPrev.x) / windowDtSec;
+    const tvy = (tgtNext.y - tgtPrev.y) / windowDtSec;
     const tvMag = Math.sqrt(tvx * tvx + tvy * tvy);
 
     // Only evaluate tracking error & velocity agreement while target stimulus is actively moving
     if (tvMag < 0.02) continue;
 
-    const gaze = interpolateGaze(gazeSeries, tgt.t);
-    if (!gaze) continue;
+    const gaze = interpolateGaze(gazesToUse, tgt.t);
+    if (gaze) {
+      const dx = gaze.x - tgt.x;
+      const dy = gaze.y - tgt.y;
+      totalError += Math.sqrt(dx * dx + dy * dy);
+      sampleCount++;
+    }
 
-    // Distance error during active movement
-    const dx = gaze.x - tgt.x;
-    const dy = gaze.y - tgt.y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    totalError += dist;
-    sampleCount++;
-
-    const prevGaze = interpolateGaze(gazeSeries, prevTgt.t);
-    if (!prevGaze) continue;
-
-    const gvx = (gaze.x - prevGaze.x) / dt;
-    const gvy = (gaze.y - prevGaze.y) / dt;
+    const gvx = (gazeNext.x - gazePrev.x) / windowDtSec;
+    const gvy = (gazeNext.y - gazePrev.y) / windowDtSec;
 
     sumDot += gvx * tvx + gvy * tvy;
     sumTgtSq += tvx * tvx + tvy * tvy;
@@ -1680,7 +1692,7 @@ export function scoreSmoothPursuit(
 
   // Regression gain: normalized to max 1.05 for normal full-amplitude pursuit
   const rawGain = sumTgtSq > 1e-9 ? sumDot / sumTgtSq : 0;
-  const pursuitGain = Math.min(Math.max(parseFloat(rawGain.toFixed(2)), 0), 1.05);
+  const pursuitGain = Math.min(Math.max(parseFloat(rawGain.toFixed(2)), -1.0), 1.05);
 
   // Cosine similarity between the two velocity vectors — the phase/direction
   // agreement independent of speed, so a gain near 1.0 achieved by chance

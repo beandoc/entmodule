@@ -312,7 +312,7 @@ export const RedDotPursuitTab: React.FC<{
           headHistoryRef.current.push({ t: curLiveData.gazeT || now, yaw: curLiveData.headYaw });
         }
 
-        if (now - lastWaveformSyncRef.current >= 80) {
+        if (now - lastWaveformSyncRef.current >= 16) {
           lastWaveformSyncRef.current = now;
           setWaveformSamples([...waveformBufferRef.current]);
         }

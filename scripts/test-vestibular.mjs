@@ -237,6 +237,15 @@ run = sweep(createRepState(), { ...config, minRepMs: 5000 }, excursion(45), 0, 5
 assert.equal(run.state.reps, 1, 'the first rep must count however soon it arrives');
 console.log('   [PASS] the first repetition is never debounced');
 
+// Head 45 degree (cawthorne-diagonal) habituation nodding test
+const cawthorne = repConfigFor(exerciseById('cawthorne-diagonal'));
+const cawthorneExcursion = [0, 15, 22, 10, 0];
+let cawthorneRun = sweep(createRepState(), cawthorne, [
+  ...cawthorneExcursion, ...cawthorneExcursion, ...cawthorneExcursion
+], 0, 400);
+assert.equal(cawthorneRun.state.reps, 3, `Head 45 degree must count 3 consecutive nods, got ${cawthorneRun.state.reps}`);
+console.log('   [PASS] Head 45 degree counts consecutive same-direction nods with realistic 20° pitch excursions');
+
 // Velocity is measured, and a slow sweep reads slower than a fast one
 const slow = sweep(createRepState(), config, excursion(45), 0, 400);
 const quick = sweep(createRepState(), config, excursion(45), 0, 60);

@@ -98,7 +98,7 @@ export const EMPTY_SESSION: SessionData = {
   gazeHistory: [], headHistory: [], analytics: null, durationMs: 0,
 };
 
-export const HUD_SYNC_INTERVAL_MS = 80;
+export const HUD_SYNC_INTERVAL_MS = 16;
 
 export interface EyeTracingPoint {
   t: number;             // Timestamp (ms)

@@ -10,11 +10,12 @@
     "lint": "next lint",
     "db:push": "prisma db push",
     "db:seed": "node scripts/seed.mjs",
-    "test:interop": "node scripts/test-interop.mjs",
-    "test:tinnitus": "node scripts/test-tinnitus.mjs",
-    "test:vestibular": "node scripts/test-vestibular.mjs",
-    "test:gaze": "node scripts/test-gaze.mjs",
-    "test:voice": "node scripts/test-voice.mjs && node scripts/test-voice-rx.mjs"
+    "test:interop": "npx tsx scripts/test-interop.mjs",
+    "test:tinnitus": "npx tsx scripts/test-tinnitus.mjs",
+    "test:vestibular": "npx tsx scripts/test-vestibular.mjs",
+    "test:gaze": "npx tsx scripts/test-gaze.mjs",
+    "test:vng": "npx tsx scripts/test-vng-clinical.mjs",
+    "test:voice": "npx tsx scripts/test-voice.mjs && npx tsx scripts/test-voice-rx.mjs"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.1",

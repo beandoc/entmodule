@@ -20,6 +20,8 @@
  * with (0,0) = top-left of the *mirrored* image the patient sees.
  */
 
+import { scoreSmoothPursuitVNG } from './vng-analytics.js';
+
 /* =========================================================== types */
 
 export interface GazePoint {
@@ -584,7 +586,8 @@ export function detectSaccades(
       if (pts.length < 2) continue;
 
       const peakVelocity = Math.max(...velocities.slice(saccadeStart, i)) * DEG_PER_UNIT;
-      const from = { x: pts[0].x, y: pts[0].y };
+      const originPt = gazeHistory[saccadeStart > 0 ? saccadeStart - 1 : saccadeStart];
+      const from = { x: originPt.x, y: originPt.y };
       const to = { x: pts[pts.length - 1].x, y: pts[pts.length - 1].y };
       const dx = to.x - from.x;
       const dy = to.y - from.y;
@@ -1632,130 +1635,14 @@ export function scoreSmoothPursuit(
   saccades: Saccade[],
   locale: 'en' | 'hi' = 'en'
 ): PursuitScore {
-  if (targetSeries.length < 5 || gazeSeries.length < 5) {
-    return {
-      pursuitGain: 0,
-      directionalAgreement: 0,
-      meanTrackingErrorPct: 0,
-      catchUpSaccadeCount: 0,
-      quality: 'fair',
-      guidance: locale === 'hi' ? 'पर्याप्त डेटा एकत्र नहीं हुआ।' : 'Insufficient data collected for pursuit score.',
-    };
-  }
-
-  const { alignedTargets, alignedGazes } = alignTimeSeriesBaselines(targetSeries, gazeSeries);
-  const targetsToUse = alignedTargets;
-  const gazesToUse = alignedGazes;
-
-  let totalError = 0;
-  let sampleCount = 0;
-
-  let sumDot = 0;
-  let sumTgtSq = 0;
-  let sumGazeSq = 0;
-
-  for (let i = 1; i < targetsToUse.length - 1; i++) {
-    const tgt = targetsToUse[i];
-    const tNext = tgt.t + 25;
-    const tPrev = tgt.t - 25;
-
-    const gazeNext = interpolateGaze(gazesToUse, tNext);
-    const gazePrev = interpolateGaze(gazesToUse, tPrev);
-    const tgtNext = interpolateTargetXY(targetsToUse, tNext);
-    const tgtPrev = interpolateTargetXY(targetsToUse, tPrev);
-
-    if (!gazeNext || !gazePrev || !tgtNext || !tgtPrev) continue;
-
-    const windowDtSec = 0.050; // 50ms central difference baseline
-    const tvx = (tgtNext.x - tgtPrev.x) / windowDtSec;
-    const tvy = (tgtNext.y - tgtPrev.y) / windowDtSec;
-    const tvMag = Math.sqrt(tvx * tvx + tvy * tvy);
-
-    // Only evaluate tracking error & velocity agreement while target stimulus is actively moving
-    if (tvMag < 0.02) continue;
-
-    const gaze = interpolateGaze(gazesToUse, tgt.t);
-    if (gaze) {
-      const dx = gaze.x - tgt.x;
-      const dy = gaze.y - tgt.y;
-      totalError += Math.sqrt(dx * dx + dy * dy);
-      sampleCount++;
-    }
-
-    const gvx = (gazeNext.x - gazePrev.x) / windowDtSec;
-    const gvy = (gazeNext.y - gazePrev.y) / windowDtSec;
-
-    sumDot += gvx * tvx + gvy * tvy;
-    sumTgtSq += tvx * tvx + tvy * tvy;
-    sumGazeSq += gvx * gvx + gvy * gvy;
-  }
-
-  // Regression gain: normalized to max 1.05 for normal full-amplitude pursuit
-  const rawGain = sumTgtSq > 1e-9 ? sumDot / sumTgtSq : 0;
-  const pursuitGain = Math.min(Math.max(parseFloat(rawGain.toFixed(2)), -1.0), 1.05);
-
-  // Cosine similarity between the two velocity vectors — the phase/direction
-  // agreement independent of speed, so a gain near 1.0 achieved by chance
-  // (uncorrelated but similarly-sized motion) can still be told apart from
-  // real tracking.
-  const denom = Math.sqrt(sumTgtSq * sumGazeSq);
-  const directionalAgreement = denom > 1e-9
-    ? parseFloat(Math.min(Math.max(sumDot / denom, -1), 1).toFixed(2))
-    : 0;
-
-  const meanError = sampleCount > 0 ? (totalError / sampleCount) * 100 : 0;
-
-  // Catch-up saccades: saccades whose gaze lagged the target by a meaningful
-  // margin at onset, and whose direction moves gaze back toward the target
-  // (not merely any eye movement that happens to occur during the test).
-  const CATCH_UP_MIN_ERROR = 0.04; // ~4% of screen — below this, treat as noise
-  const CATCH_UP_MIN_ALIGNMENT = 0.3; // cosine similarity threshold
-  let catchUpSaccadeCount = 0;
-  for (const s of saccades) {
-    const target = interpolateTargetXY(targetSeries, s.startT);
-    if (!target) continue;
-    const ex = target.x - s.from.x;
-    const ey = target.y - s.from.y;
-    const errMag = Math.sqrt(ex * ex + ey * ey);
-    if (errMag < CATCH_UP_MIN_ERROR) continue;
-    const alignment = (s.direction.x * ex + s.direction.y * ey) / errMag;
-    if (alignment > CATCH_UP_MIN_ALIGNMENT) catchUpSaccadeCount++;
-  }
-
-  // Directional agreement gates quality first: a gain that only looks healthy
-  // because speed happened to match — with the eye moving uncorrelated with,
-  // or opposite to, the target — must not be reported as good tracking no
-  // matter what the (now still speed-only) error/gain numbers say alone.
-  const quality: PursuitScore['quality'] =
-    directionalAgreement < 0.3 ? 'impaired' :
-    pursuitGain >= 0.85 && meanError < 15 ? 'excellent' :
-    pursuitGain >= 0.70 && meanError < 25 ? 'good' :
-    pursuitGain >= 0.50 ? 'fair' : 'impaired';
-
-  const antiPhase = directionalAgreement < -0.3;
-
-  let guidance = '';
-  if (locale === 'hi') {
-    if (antiPhase) guidance = 'नज़र बिंदु के विपरीत दिशा में जा रही है — जांचें कि स्क्रीन सही ढंग से दिख रही है और दोबारा प्रयास करें।';
-    else if (quality === 'excellent') guidance = 'स्मूथ परस्यूट उत्कृष्ट है — आपकी नज़र चलती हुई बिंदु का सटीक पीछा कर रही है।';
-    else if (quality === 'good') guidance = 'अच्छा ट्रैकिंग प्रदर्शन — नज़र में हल्का विचलन है, अभ्यास जारी रखें।';
-    else if (quality === 'fair') guidance = 'मध्यम ट्रैकिंग — बिंदु से नज़र हटने पर कैच-अप सैकेड देखे गए।';
-    else guidance = 'स्मूथ परस्यूट प्रभावित है — 2-पॉइंट नियम का पालन करें और अत्यधिक थकान से बचें।';
-  } else {
-    if (antiPhase) guidance = 'Gaze is moving opposite the target — check the display is not mirrored and retry.';
-    else if (quality === 'excellent') guidance = 'Excellent smooth pursuit — gaze accurately locked onto the moving target.';
-    else if (quality === 'good') guidance = 'Good tracking performance with minor gaze lag — continue daily practice.';
-    else if (quality === 'fair') guidance = 'Moderate pursuit control — catch-up saccades observed as gaze fell behind target.';
-    else guidance = 'Impaired smooth pursuit — monitor symptom escalation strictly (+2 Point Rule).';
-  }
-
+  const vng = scoreSmoothPursuitVNG(targetSeries, gazeSeries, saccades, 30, locale);
   return {
-    pursuitGain,
-    directionalAgreement,
-    meanTrackingErrorPct: parseFloat(meanError.toFixed(1)),
-    catchUpSaccadeCount,
-    quality,
-    guidance,
+    pursuitGain: vng.velocityGain,
+    directionalAgreement: vng.directionalAgreement,
+    meanTrackingErrorPct: parseFloat((vng.binocular?.meanDisconjugacyDeg ?? 0).toFixed(1)),
+    catchUpSaccadeCount: vng.catchUpSaccadeCount,
+    quality: vng.qualityLabel,
+    guidance: vng.clinicalGuidance,
   };
 }
 

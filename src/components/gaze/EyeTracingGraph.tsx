@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Activity, Play, Pause, Download } from 'lucide-react';
 import { CameraState, PursuitPattern, EyeTracingPoint } from './GazeCanvasHelpers';
+import { SmoothPursuitVNGScore } from '@/lib/vng-analytics';
 
 interface EyeTracingGraphProps {
   hi: boolean;
@@ -10,10 +11,11 @@ interface EyeTracingGraphProps {
   cameraState: CameraState;
   /** True once a test has completed — the graph freezes on that recording rather than resuming live camera streaming. */
   testCompleted?: boolean;
+  vngScore?: SmoothPursuitVNGScore | null;
 }
 
 export const EyeTracingGraph: React.FC<EyeTracingGraphProps> = ({
-  hi, samples, pattern, isTesting, cameraState, testCompleted = false,
+  hi, samples, pattern, isTesting, cameraState, testCompleted = false, vngScore = null,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [axisMode, setAxisMode] = useState<'horizontal' | 'vertical' | 'magnitude'>('horizontal');
@@ -41,6 +43,7 @@ export const EyeTracingGraph: React.FC<EyeTracingGraphProps> = ({
     link.href = canvas.toDataURL('image/png');
     link.click();
   };
+
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -278,6 +281,16 @@ export const EyeTracingGraph: React.FC<EyeTracingGraphProps> = ({
   }, [activeSamples, axisMode, timeWindowSec, showTarget, showRightEye, showLeftEye, isPaused, hi]);
 
   const metrics = useMemo(() => {
+    if (vngScore) {
+      const g = (vngScore.velocityGain ?? 0).toFixed(2);
+      return {
+        rightGain: g,
+        leftGain: g,
+        disagreementDeg: (vngScore.binocular?.meanDisconjugacyDeg ?? 0).toFixed(1),
+        quality: vngScore.qualityLabel === 'excellent' || vngScore.qualityLabel === 'good' ? 'OPTIMAL' : 'SACCADIC',
+      };
+    }
+
     if (samples.length < 5) return null;
     const windowSamples = samples.slice(-120);
 
@@ -310,7 +323,7 @@ export const EyeTracingGraph: React.FC<EyeTracingGraphProps> = ({
       disagreementDeg: avgDisagreementDeg.toFixed(1),
       quality: (rightGain + leftGain) / 2 > 0.85 ? 'OPTIMAL' : 'SACCADIC',
     };
-  }, [samples]);
+  }, [samples, vngScore]);
 
   return (
     <div className="bg-[#0b0f19] rounded-2xl border border-teal-500/30 p-4 sm:p-5 space-y-4 shadow-2xl">

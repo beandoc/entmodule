@@ -1100,6 +1100,7 @@ export const RedDotPursuitTab: React.FC<{
           isTesting={isTesting}
           cameraState={cameraState}
           testCompleted={hasCompletedTest}
+          vngScore={vngPursuitScore}
         />
       </div>
     </div>

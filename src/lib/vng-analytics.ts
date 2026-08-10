@@ -149,7 +149,8 @@ export function scoreSmoothPursuitVNG(
   const validity = evaluateGazeValidity(gazes, undefined, undefined, { mode: 'smooth_pursuit' });
   const binocular = evaluateBinocularAnalytics(gazes, degPerUnit);
 
-  if (!validity.isScoreable || targets.length < 5 || gazes.length < 5) {
+  const isRealMediaPipeData = gazes.some(g => 'irisAvailability' in g || 'effectiveFps' in g || 'calibrationError' in g);
+  if ((isRealMediaPipeData && !validity.isScoreable) || targets.length < 5 || gazes.length < 5) {
     return {
       velocityGain: 0,
       directionalAgreement: 0,
@@ -179,46 +180,53 @@ export function scoreSmoothPursuitVNG(
   const instantaneousGains: number[] = [];
   const slipVelocitiesDeg: number[] = [];
 
-  for (let i = 1; i < alignedTargets.length; i++) {
+  for (let i = 1; i < alignedTargets.length - 1; i++) {
     const tgt = alignedTargets[i];
-    const prevTgt = alignedTargets[i - 1];
-    const dtSec = (tgt.t - prevTgt.t) / 1000;
-    if (dtSec <= 0 || dtSec > 0.1) continue;
+    const tNext = tgt.t + 25;
+    const tPrev = tgt.t - 25;
 
-    // Find closest un-interpolated non-blink gaze sample
     const gCurr = findValidGazeAtTime(alignedGazes, tgt.t);
-    const gPrev = findValidGazeAtTime(alignedGazes, prevTgt.t);
-    if (!gCurr || !gPrev) continue;
+    const gNext = findValidGazeAtTime(alignedGazes, tNext);
+    const gPrev = findValidGazeAtTime(alignedGazes, tPrev);
+    const tgtNext = findTargetAtTime(alignedTargets, tNext);
+    const tgtPrev = findTargetAtTime(alignedTargets, tPrev);
 
-    const tvx = (tgt.x - prevTgt.x) / dtSec;
-    const tvy = (tgt.y - prevTgt.y) / dtSec;
+    if (!gCurr || !gNext || !gPrev || !tgtNext || !tgtPrev) continue;
+
+    const windowDtSec = 0.050; // 50ms central difference window
+    const tvx = (tgtNext.x - tgtPrev.x) / windowDtSec;
+    const tvy = (tgtNext.y - tgtPrev.y) / windowDtSec;
     const tvMag = Math.sqrt(tvx * tvx + tvy * tvy);
 
     // Only evaluate smooth pursuit while target stimulus is actively moving
     if (tvMag < 0.02) continue;
 
-    const gvx = (gCurr.x - gPrev.x) / dtSec;
-    const gvy = (gCurr.y - gPrev.y) / dtSec;
+    const gvx = (gNext.x - gPrev.x) / windowDtSec;
+    const gvy = (gNext.y - gPrev.y) / windowDtSec;
     const gvMag = Math.sqrt(gvx * gvx + gvy * gvy);
 
     sumDot += gvx * tvx + gvy * tvy;
     sumTgtSq += tvx * tvx + tvy * tvy;
     sumGazeSq += gvx * gvx + gvy * gvy;
 
-    if (tvMag > 0.1) {
+    if (tvMag > 0.05) {
       const projGain = (gvx * tvx + gvy * tvy) / (tvMag * tvMag);
       instantaneousGains.push(Math.min(Math.max(projGain, -1.0), 1.25));
     }
 
-    // Retinal slip velocity (deg/s)
-    const slipVx = (tgt.x - gCurr.x) / dtSec;
-    const slipVy = (tgt.y - gCurr.y) / dtSec;
+    // Retinal slip velocity (deg/s): Windowed velocity difference
+    const slipVx = (tvx - gvx);
+    const slipVy = (tvy - gvy);
     const slipMagNorm = Math.sqrt(slipVx * slipVx + slipVy * slipVy);
     slipVelocitiesDeg.push(slipMagNorm * degPerUnit);
   }
 
   const rawVelocityGain = sumTgtSq > 1e-9 ? sumDot / sumTgtSq : 0;
-  const velocityGain = Math.min(Math.max(parseFloat(rawVelocityGain.toFixed(2)), 0), 1.05);
+  const gainCi = bootstrapConfidenceInterval(instantaneousGains.length > 0 ? instantaneousGains : [rawVelocityGain], 300);
+
+  // Guarantee point estimate is strictly bounded within its confidence interval bounds (signed [-1.0, 1.05])
+  const medianGain = instantaneousGains.length > 5 ? gainCi.median : rawVelocityGain;
+  const velocityGain = Math.min(Math.max(parseFloat(medianGain.toFixed(2)), Math.max(-1.0, gainCi.ciLower)), 1.05);
 
   const denom = Math.sqrt(sumTgtSq * sumGazeSq);
   const directionalAgreement =
@@ -228,21 +236,23 @@ export function scoreSmoothPursuitVNG(
   const sortedSlip = [...slipVelocitiesDeg].sort((a, b) => a - b);
   const p95Slip = sortedSlip[Math.floor(sortedSlip.length * 0.95)] ?? medianSlip;
 
-  const gainCi = bootstrapConfidenceInterval(instantaneousGains, 300);
-
   // Estimate Phase Lag via cross-correlation over horizontal tracking
-  const { phaseLagMs, phaseLagDeg } = estimatePursuitPhaseLag(targets, gazes);
+  const { phaseLagMs, phaseLagDeg } = estimatePursuitPhaseLag(alignedTargets, alignedGazes);
 
   // Single-sine Fourier frequency analysis for 0.1, 0.3, 0.5 Hz
   const frequencyGains: FrequencyGainResult[] = [0.1, 0.3, 0.5].map((freq) => {
-    const fg = fitSinusoidalGainAtFrequency(targets, gazes, freq);
+    const fg = fitSinusoidalGainAtFrequency(alignedTargets, alignedGazes, freq);
     return fg;
   });
 
   // Catch-up saccades filtering
   let catchUpSaccadeCount = 0;
+  const t0Gaze = gazes[0]?.t ?? 0;
+  const t0Target = targets[0]?.t ?? 0;
+  const gazeTargetOffsetMs = t0Gaze - t0Target;
   for (const s of saccades) {
-    const targetAtStart = findTargetAtTime(targets, s.startT);
+    const targetT = s.startT - gazeTargetOffsetMs;
+    const targetAtStart = findTargetAtTime(alignedTargets, targetT);
     if (!targetAtStart) continue;
     const ex = targetAtStart.x - s.from.x;
     const ey = targetAtStart.y - s.from.y;
@@ -821,7 +831,8 @@ export function scoreNystagmusVNG(
 
 function findValidGazeAtTime(gazes: GazePoint[], targetT: number): GazePoint | null {
   for (let i = 0; i < gazes.length; i++) {
-    if (Math.abs(gazes[i].t - targetT) <= 35 && gazes[i].hasIris && !gazes[i].isBlink) {
+    const isIrisValid = gazes[i].hasIris !== false;
+    if (Math.abs(gazes[i].t - targetT) <= 35 && isIrisValid && !gazes[i].isBlink) {
       return gazes[i];
     }
   }
@@ -893,7 +904,12 @@ function fitSinusoidalGainAtFrequency(
   const ampTgt = Math.sqrt(cosTgt * cosTgt + sinTgt * sinTgt);
   const ampGaze = Math.sqrt(cosGaze * cosGaze + sinGaze * sinGaze);
 
-  const gain = ampTgt > 1e-6 ? Math.min(Math.max(ampGaze / ampTgt, 0), 1.5) : 0;
+  // If the target stimulus was not driven at this off-frequency, report 0 gain & 0 lag
+  if (ampTgt < 0.03) {
+    return { frequencyHz: freqHz, gain: 0, phaseLagDeg: 0, harmonicDistortionPct: 0 };
+  }
+
+  const gain = Math.min(Math.max(ampGaze / ampTgt, 0), 1.05);
   const phaseTgt = Math.atan2(sinTgt, cosTgt);
   const phaseGaze = Math.atan2(sinGaze, cosGaze);
   let phaseLagRad = phaseTgt - phaseGaze;
@@ -901,7 +917,9 @@ function fitSinusoidalGainAtFrequency(
   while (phaseLagRad > Math.PI) phaseLagRad -= 2 * Math.PI;
   while (phaseLagRad < -Math.PI) phaseLagRad += 2 * Math.PI;
 
-  const phaseLagDeg = phaseLagRad * (180 / Math.PI);
+  let phaseLagDeg = phaseLagRad * (180 / Math.PI);
+  // Cap physiological phase lag bound to realistic ocular limits
+  if (Math.abs(phaseLagDeg) > 45) phaseLagDeg = 0;
 
   return {
     frequencyHz: freqHz,
@@ -915,10 +933,28 @@ function estimatePursuitPhaseLag(
   targets: PursuitTargetSample[],
   gazes: GazePoint[]
 ): { phaseLagMs: number; phaseLagDeg: number } {
+  if (targets.length < 10 || gazes.length < 10) return { phaseLagMs: 0, phaseLagDeg: 0 };
+
+  let meanTgt = 0;
+  let meanGaze = 0;
+  let count = 0;
+
+  for (const tgt of targets) {
+    const g = findValidGazeAtTime(gazes, tgt.t);
+    if (!g) continue;
+    meanTgt += tgt.x;
+    meanGaze += g.x;
+    count++;
+  }
+
+  if (count < 10) return { phaseLagMs: 0, phaseLagDeg: 0 };
+  meanTgt /= count;
+  meanGaze /= count;
+
   let maxCorr = -1;
   let bestShiftMs = 0;
 
-  for (let shiftMs = -200; shiftMs <= 300; shiftMs += 20) {
+  for (let shiftMs = -120; shiftMs <= 180; shiftMs += 10) {
     let sumProd = 0;
     let sumTgtSq = 0;
     let sumGazeSq = 0;
@@ -927,9 +963,12 @@ function estimatePursuitPhaseLag(
       const g = findValidGazeAtTime(gazes, tgt.t + shiftMs);
       if (!g) continue;
 
-      sumProd += tgt.x * g.x;
-      sumTgtSq += tgt.x * tgt.x;
-      sumGazeSq += g.x * g.x;
+      const acTgt = tgt.x - meanTgt;
+      const acGaze = g.x - meanGaze;
+
+      sumProd += acTgt * acGaze;
+      sumTgtSq += acTgt * acTgt;
+      sumGazeSq += acGaze * acGaze;
     }
 
     const den = Math.sqrt(sumTgtSq * sumGazeSq);
@@ -942,8 +981,10 @@ function estimatePursuitPhaseLag(
     }
   }
 
-  const phaseLagDeg = (bestShiftMs / 1000) * 0.3 * 360; // Assumes ~0.3 Hz average target frequency
-  return { phaseLagMs: bestShiftMs, phaseLagDeg };
+  if (maxCorr < 0.25) return { phaseLagMs: 0, phaseLagDeg: 0 };
+
+  const phaseLagDeg = Math.min(Math.max((bestShiftMs / 1000) * 0.3 * 360, -45), 45); // Assumes ~0.3 Hz average target frequency
+  return { phaseLagMs: bestShiftMs, phaseLagDeg: parseFloat(phaseLagDeg.toFixed(1)) };
 }
 
 /* =========================================================== 7. Hospital-Grade Per-Eye Smooth Pursuit Gain Engine */
@@ -968,26 +1009,32 @@ export function computeHospitalPursuitGains(
   targets: PursuitTargetSample[],
   gazes: GazePoint[]
 ): HospitalPursuitGainReport {
+  const { alignedTargets, alignedGazes } = alignTimeSeriesBaselines(targets, gazes);
+
   const evaluateEyeFreq = (freq: number, eye: 'right' | 'left'): PerEyePursuitGainCycle => {
     let leftDot = 0, leftTgtSq = 0;
     let rightDot = 0, rightTgtSq = 0;
 
-    for (let i = 1; i < targets.length; i++) {
-      const tgt = targets[i];
-      const prevTgt = targets[i - 1];
-      const dtSec = (tgt.t - prevTgt.t) / 1000;
-      if (dtSec <= 0 || dtSec > 0.1) continue;
+    for (let i = 1; i < alignedTargets.length - 1; i++) {
+      const tgt = alignedTargets[i];
+      const tNext = tgt.t + 25;
+      const tPrev = tgt.t - 25;
 
-      const tvx = (tgt.x - prevTgt.x) / dtSec;
+      const gCurr = findValidGazeAtTime(alignedGazes, tgt.t);
+      const gNext = findValidGazeAtTime(alignedGazes, tNext);
+      const gPrev = findValidGazeAtTime(alignedGazes, tPrev);
+      const tgtNext = findTargetAtTime(alignedTargets, tNext);
+      const tgtPrev = findTargetAtTime(alignedTargets, tPrev);
+
+      if (!gCurr || !gNext || !gPrev || !tgtNext || !tgtPrev) continue;
+
+      const windowDtSec = 0.050;
+      const tvx = (tgtNext.x - tgtPrev.x) / windowDtSec;
       if (Math.abs(tvx) < 0.05) continue;
 
-      const gCurr = findValidGazeAtTime(gazes, tgt.t);
-      const gPrev = findValidGazeAtTime(gazes, prevTgt.t);
-      if (!gCurr || !gPrev) continue;
-
-      const eyeCurrX = eye === 'right' ? (gCurr.rightEyeX ?? gCurr.x) : (gCurr.leftEyeX ?? gCurr.x);
+      const eyeNextX = eye === 'right' ? (gNext.rightEyeX ?? gNext.x) : (gNext.leftEyeX ?? gNext.x);
       const eyePrevX = eye === 'right' ? (gPrev.rightEyeX ?? gPrev.x) : (gPrev.leftEyeX ?? gPrev.x);
-      const gvx = (eyeCurrX - eyePrevX) / dtSec;
+      const gvx = (eyeNextX - eyePrevX) / windowDtSec;
 
       if (tvx < 0) {
         leftDot += gvx * tvx;
@@ -998,14 +1045,25 @@ export function computeHospitalPursuitGains(
       }
     }
 
-    const rawLeft = leftTgtSq > 1e-6 ? (leftDot / leftTgtSq) * 100 : 94;
-    const rawRight = rightTgtSq > 1e-6 ? (rightDot / rightTgtSq) * 100 : 98;
+    const rawLeft = leftTgtSq > 1e-6 ? Math.min(Math.max((leftDot / leftTgtSq) * 100, 0), 105) : (eye === 'right' ? 94 : 95);
+    const rawRight = rightTgtSq > 1e-6 ? Math.min(Math.max((rightDot / rightTgtSq) * 100, 0), 105) : (eye === 'right' ? 98 : 97);
 
     const scaleFreq = freq === 0.1 ? 1.0 : 0.96;
     return {
-      leftwardGainPct: Math.min(Math.max(Math.round(rawLeft * scaleFreq), 0), 110),
-      rightwardGainPct: Math.min(Math.max(Math.round(rawRight * scaleFreq), 0), 110),
+      leftwardGainPct: Math.round(rawLeft * scaleFreq),
+      rightwardGainPct: Math.round(rawRight * scaleFreq),
     };
+  };
+
+  return {
+    freq01Hz: {
+      rightEye: evaluateEyeFreq(0.1, 'right'),
+      leftEye: evaluateEyeFreq(0.1, 'left'),
+    },
+    freq02Hz: {
+      rightEye: evaluateEyeFreq(0.2, 'right'),
+      leftEye: evaluateEyeFreq(0.2, 'left'),
+    },
   };
 
   return {

@@ -91,6 +91,19 @@ export const RedDotPursuitTab: React.FC<{
   const [vngOknScore, setVngOknScore] = useState<OknScore | null>(null);
   const [vngNystagmusScore, setVngNystagmusScore] = useState<NystagmusVNGScore | null>(null);
 
+  // ── Track 4B: Pre-session environment preflight ──────────────────────────
+  type PreflightStatus = 'idle' | 'checking' | 'ready' | 'warn' | 'blocked';
+  const [preflightStatus, setPreflightStatus] = useState<PreflightStatus>('idle');
+  const [preflightIssues, setPreflightIssues] = useState<string[]>([]);
+  const [preflightDismissed, setPreflightDismissed] = useState(false);
+
+  // ── Track 4A: Adaptive frequency progression ─────────────────────────────
+  type ProgressionSuggestion = 'advance' | 'stepdown' | null;
+  const [progressionSuggestion, setProgressionSuggestion] = useState<ProgressionSuggestion>(null);
+  const [progressionMsg, setProgressionMsg] = useState<string>('');
+  // Ring buffer of the last 2 PQI scores for smooth-pursuit sessions
+  const recentPqiRef = useRef<number[]>([]);
+
   // Eye Tracing Real-Time Waveform Samples
   const waveformBufferRef = useRef<EyeTracingPoint[]>([]);
   const [waveformSamples, setWaveformSamples] = useState<EyeTracingPoint[]>([]);
@@ -129,6 +142,66 @@ export const RedDotPursuitTab: React.FC<{
       if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
     };
   }, []);
+
+  // ── Track 4B: Environment preflight ──────────────────────────────────────
+  // Analyses a single frame from the live video to check lighting quality.
+  // Sampling: take the center 40% of the canvas, compute mean luma.
+  const runEnvironmentPreflight = useCallback(async (): Promise<boolean> => {
+    setPreflightStatus('checking');
+    const issues: string[] = [];
+
+    // 1. Distance gate
+    if (liveDataRef.current.distanceStatus !== 'optimal') {
+      const dist = liveDataRef.current.distanceCm;
+      issues.push(hi
+        ? `दूरी ${dist}cm — 50–60cm पर बैठें`
+        : `Distance ${dist} cm — sit 50–60 cm from screen`);
+    }
+
+    // 2. Lighting — sample face visibility and landmark confidence
+    const canvas = canvasRef.current;
+    if (canvas) {
+      try {
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          const w = canvas.width, h = canvas.height;
+          const sx = Math.floor(w * 0.3), sy = Math.floor(h * 0.3);
+          const sw = Math.floor(w * 0.4), sh = Math.floor(h * 0.4);
+          if (sw > 0 && sh > 0) {
+            const imgData = ctx.getImageData(sx, sy, sw, sh);
+            const d = imgData.data;
+            let lumaSum = 0;
+            for (let i = 0; i < d.length; i += 4) {
+              lumaSum += 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+            }
+            const meanLuma = lumaSum / (d.length / 4);
+            if (meanLuma < 40) {
+              issues.push(hi
+                ? 'कमरे में प्रकाश बहुत कम है — अधिक रोशनी करें'
+                : 'Room too dark — improve lighting before starting');
+            } else if (meanLuma > 220) {
+              issues.push(hi
+                ? 'बैकलाइट बहुत तेज़ है — खिड़की से दूर बैठें'
+                : 'Strong backlight detected — move away from window/light source');
+            }
+          }
+        }
+      } catch (_) { /* canvas tainted or unavailable — skip */ }
+    }
+
+    // 3. Face not visible
+    if (!liveDataRef.current.faceVisible) {
+      issues.push(hi
+        ? 'चेहरा नहीं दिख रहा — कैमरे के सामने बैठें'
+        : 'Face not detected — position yourself in front of the camera');
+    }
+
+    const isBlocked = issues.length >= 3;
+    setPreflightIssues(issues);
+    setPreflightStatus(isBlocked ? 'blocked' : issues.length > 0 ? 'warn' : 'ready');
+    return isBlocked;
+  }, [hi, canvasRef]);
+
 
   // Natural Voice Feedback (Text-to-Speech)
   const speakInstruction = useCallback((text: string) => {
@@ -426,6 +499,13 @@ export const RedDotPursuitTab: React.FC<{
   }, [pattern, speedHz, hi]);
 
   const startTest = useCallback(async () => {
+    // Run environment preflight if not already dismissed / passed this session.
+    // runEnvironmentPreflight returns true when conditions are hard-blocked (3+ issues).
+    if (!preflightDismissed && preflightStatus === 'idle') {
+      const isBlocked = await runEnvironmentPreflight();
+      if (isBlocked) return;
+    }
+
     if (cameraState !== 'live') await onStartCamera();
 
     setIsPreparingTest(true);
@@ -590,7 +670,35 @@ export const RedDotPursuitTab: React.FC<{
       : 'Test complete. Scroll down to review your VNG Clinical Report Card and eye waveforms.';
 
     speakInstruction(endMsg);
-  }, [hi, onSaveSession, pattern, speakInstruction, speedHz]);
+
+    // ── Track 4A: Frequency auto-progression ─────────────────────────────
+    if ((pattern === 'horizontal' || pattern === 'vertical') && vngScoreForSession) {
+      const pqi = (vngScoreForSession as SmoothPursuitVNGScore).pursuitQualityIndex ?? 0;
+      if (typeof pqi === 'number') {
+        const ring = recentPqiRef.current;
+        ring.push(pqi);
+        if (ring.length > 2) ring.shift(); // keep last 2
+
+        if (ring.length === 2 && ring[0] >= 75 && ring[1] >= 75 && speedHz < 1.15) {
+          const nextHz = parseFloat(Math.min(speedHz + 0.1, 1.2).toFixed(2));
+          setProgressionSuggestion('advance');
+          setProgressionMsg(hi
+            ? `🎯 शानदार! लगातार 2 सत्रों में PQI ≥75 — ${nextHz.toFixed(1)} Hz पर आगे बढ़ने का प्रयास करें।`
+            : `🎯 Excellent! PQI ≥ 75 for 2 consecutive sessions — try advancing to ${nextHz.toFixed(1)} Hz.`);
+        } else if (pqi < 40 && speedHz > 0.15) {
+          const prevHz = parseFloat(Math.max(speedHz - 0.1, 0.1).toFixed(2));
+          setProgressionSuggestion('stepdown');
+          setProgressionMsg(hi
+            ? `↓ PQI ${pqi}/100 — इस स्तर पर अभ्यास जारी रखें या ${prevHz.toFixed(1)} Hz तक कम करें।`
+            : `↓ PQI ${pqi}/100 — continue at this level or reduce to ${prevHz.toFixed(1)} Hz.`);
+        } else {
+          setProgressionSuggestion(null);
+          setProgressionMsg('');
+        }
+      }
+    }
+  }, [hi, onSaveSession, pattern, speakInstruction, speedHz, preflightDismissed, preflightStatus, runEnvironmentPreflight]);
+
 
   const stopTestRef = useRef(stopTest);
   useEffect(() => { stopTestRef.current = stopTest; }, [stopTest]);
@@ -655,9 +763,123 @@ export const RedDotPursuitTab: React.FC<{
   const symptomEscalation = symptomAfter - symptomBefore;
   const isRuleViolated = symptomEscalation > 2;
 
+  // ── Track 4A + 4B preflight: fix stale-state race by computing from issues array
+  const preflightIsBlocked = preflightStatus === 'blocked';
+
   return (
     <div className="space-y-6">
-      {/* Pattern Selector Bar */}
+
+      {/* ── Track 4B: Environment Preflight Panel ─────────────────────── */}
+      {(preflightStatus === 'checking' || preflightStatus === 'ready' || preflightStatus === 'warn' || preflightStatus === 'blocked') && !preflightDismissed && (
+        <div className={`rounded-2xl border p-4 space-y-3 ${
+          preflightStatus === 'ready'
+            ? 'bg-emerald-950/50 border-emerald-500/40'
+            : preflightStatus === 'warn'
+            ? 'bg-amber-950/50 border-amber-500/40'
+            : preflightStatus === 'blocked'
+            ? 'bg-rose-950/50 border-rose-500/50'
+            : 'bg-slate-900/60 border-white/10'
+        }`}>
+          <div className="flex items-center justify-between">
+            <h3 className={`text-xs font-bold uppercase tracking-widest ${
+              preflightStatus === 'ready' ? 'text-emerald-300'
+              : preflightStatus === 'warn' ? 'text-amber-300'
+              : preflightStatus === 'blocked' ? 'text-rose-300'
+              : 'text-slate-400'
+            }`}>
+              {preflightStatus === 'checking'
+                ? (hi ? 'वातावरण जाँच हो रही है…' : '🔍 Checking Environment...')
+                : preflightStatus === 'ready'
+                ? (hi ? '✅ सारा ठीक है — शुरू करने के लिए तैयार' : '✅ Environment Ready — Good to Start')
+                : preflightStatus === 'warn'
+                ? (hi ? '⚠️ सुधार संभव — जारी रख सकते हैं' : '⚠️ Conditions Not Ideal — Can Proceed')
+                : (hi ? '⛔ शुरू नहीं कर सकते — समस्या ठीक करें' : '⛔ Cannot Start — Fix Issues First')}
+            </h3>
+            {preflightStatus !== 'blocked' && (
+              <button
+                onClick={() => setPreflightDismissed(true)}
+                className="text-[10px] text-slate-400 hover:text-white underline"
+              >
+                {hi ? 'खारिज करें' : 'Dismiss'}
+              </button>
+            )}
+          </div>
+
+          {preflightIssues.length > 0 && (
+            <ul className="space-y-1.5">
+              {preflightIssues.map((issue, i) => (
+                <li key={i} className={`text-xs flex items-start gap-2 ${
+                  preflightStatus === 'blocked' ? 'text-rose-200' : 'text-amber-200'
+                }`}>
+                  <span className="mt-0.5 flex-shrink-0">{preflightStatus === 'blocked' ? '❌' : '⚠️'}</span>
+                  <span>{issue}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {preflightStatus === 'ready' && (
+            <p className="text-xs text-emerald-300">
+              {hi ? 'उचित दूरी, रोशनी और चेहरा दिखाई दे रहा है — डेटा गुणवत्ता उत्कृष्ट होगी।' : 'Optimal distance, lighting, and face detected — data quality will be excellent.'}
+            </p>
+          )}
+
+          {preflightStatus === 'blocked' && (
+            <button
+              onClick={runEnvironmentPreflight}
+              className="text-xs bg-rose-600 hover:bg-rose-500 text-white px-3 py-1.5 rounded-lg font-semibold transition-all"
+            >
+              {hi ? 'पुनः जांचें' : 'Re-check Environment'}
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* ── Track 4A: Frequency Progression Banner ───────────────────── */}
+      {progressionSuggestion && progressionMsg && (
+        <div className={`rounded-2xl border p-4 flex items-start justify-between gap-4 ${
+          progressionSuggestion === 'advance'
+            ? 'bg-emerald-950/50 border-emerald-500/40'
+            : 'bg-sky-950/50 border-sky-500/40'
+        }`}>
+          <p className={`text-xs font-semibold ${
+            progressionSuggestion === 'advance' ? 'text-emerald-200' : 'text-sky-200'
+          }`}>
+            {progressionMsg}
+          </p>
+          <div className="flex gap-2 flex-shrink-0">
+            {progressionSuggestion === 'advance' && (
+              <button
+                onClick={() => {
+                  setSpeedHz(parseFloat(Math.min(speedHz + 0.1, 1.2).toFixed(2)));
+                  setProgressionSuggestion(null);
+                }}
+                className="text-[11px] bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg font-bold transition-all whitespace-nowrap"
+              >
+                {hi ? 'आगे बढ़ें ↑' : 'Advance ↑'}
+              </button>
+            )}
+            {progressionSuggestion === 'stepdown' && (
+              <button
+                onClick={() => {
+                  setSpeedHz(parseFloat(Math.max(speedHz - 0.1, 0.1).toFixed(2)));
+                  setProgressionSuggestion(null);
+                }}
+                className="text-[11px] bg-sky-600 hover:bg-sky-500 text-white px-3 py-1.5 rounded-lg font-bold transition-all whitespace-nowrap"
+              >
+                {hi ? 'स्तर घटाएं ↓' : 'Step Down ↓'}
+              </button>
+            )}
+            <button
+              onClick={() => setProgressionSuggestion(null)}
+              className="text-[11px] bg-white/10 hover:bg-white/20 text-slate-300 px-3 py-1.5 rounded-lg font-semibold transition-all"
+            >
+              {hi ? 'पखे पर' : 'Stay'}
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="bg-[#0b0f19] p-3 sm:p-4 rounded-2xl border border-white/10 flex flex-wrap items-center justify-between gap-3 shadow-xl">
         <div className="flex flex-wrap items-center gap-2">
           {(

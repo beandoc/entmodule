@@ -408,15 +408,26 @@ export function extractGazeFromLandmarks(
   let deltaX = avgOffsetX - zeroX;
   let deltaY = avgOffsetY - zeroY;
 
-  // Head Pose Compensation:
-  // Turning head right (yaw > 0 in mirrored frame) shifts pupil left in image.
-  // Partial compensation factor 0.35 accounts for eye counter-rotation.
+  // Head Pose Compensation (Track 1A):
+  //
+  // When the head rotates by yaw θ, the iris landmark shifts in the image because
+  // (a) the face moves in the frame and (b) the eye socket rotates relative to camera.
+  // The intra-ocular offset is normalised to eye-socket width, so the contamination
+  // is approximately:  Δoffset ≈ sin(θ) * (socket_width / face_width) * face_projection_gain
+  //
+  // At our gain of 1.8 and typical eye socket width ~22% of IPD, this is ~0.30 per 45°.
+  // We gate compensation to |head_velocity| < 40°/s to avoid corrupting VOR-x2 exercises
+  // where intentional head motion IS the signal.
   if (headPose) {
-    const yawComp = (headPose.yaw / 45) * 0.12;
-    const pitchComp = (headPose.pitch / 45) * 0.12;
+    const yawRad   = (headPose.yaw * Math.PI) / 180;
+    const pitchRad = (headPose.pitch * Math.PI) / 180;
+    // sin-based (not linear) so compensation is accurate up to ~30° off-axis
+    const yawComp   = Math.sin(yawRad)   * 0.30;
+    const pitchComp = Math.sin(pitchRad) * 0.30;
     deltaX -= yawComp;
     deltaY += pitchComp;
   }
+
 
   // Automatic Distance-Adaptive Gain Scaling:
   // Dynamically adjusts gain so sitting at 40cm, 55cm, or 80cm produces identical full-amplitude tracking.

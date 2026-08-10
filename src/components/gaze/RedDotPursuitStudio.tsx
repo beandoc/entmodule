@@ -106,6 +106,12 @@ export const RedDotPursuitTab: React.FC<{
   const startTimeRef = useRef<number>(performance.now());
   const headHistoryRef = useRef<Array<{ t: number; yaw: number }>>([]);
   const lastErrorSyncRef = useRef<number>(0);
+  // Once a test has completed, the waveform graph freezes on that recording
+  // instead of continuing to scroll with post-test live camera noise (which
+  // used to overwrite the just-recorded test data and made it look like the
+  // test was still running).
+  const everTestedRef = useRef(false);
+  const [hasCompletedTest, setHasCompletedTest] = useState(false);
 
   // Calibration Guided States & Voice Feedback
   const [isCalibratingCenter, setIsCalibratingCenter] = useState(false);
@@ -252,7 +258,12 @@ export const RedDotPursuitTab: React.FC<{
 
       const curLiveData = liveDataRef.current;
 
-      if (curLiveData.gazeT !== lastRecordedGazeT || (curTesting && now - lastRecordedGazeT > 30)) {
+      // Freeze waveform capture once a test has completed — only a fresh
+      // "Start" resumes it — so the recorded test trace stays on screen for
+      // review instead of scrolling away under post-test live camera noise.
+      const captureActive = curTesting || !everTestedRef.current;
+
+      if (captureActive && (curLiveData.gazeT !== lastRecordedGazeT || (curTesting && now - lastRecordedGazeT > 30))) {
         lastRecordedGazeT = curLiveData.gazeT || now;
 
         const sampleElapsed = (now - startTimeRef.current) / 1000;
@@ -280,14 +291,23 @@ export const RedDotPursuitTab: React.FC<{
           targetHistoryRef.current.push({
             x: paired.x, y: paired.y, t: curLiveData.gazeT || now, mode: pattern,
           });
+          // Scoring needs the strict, un-smoothed analytics stream — `gazeX`/
+          // `gazeY` are One-Euro filtered (and can hold position through an
+          // outlier-rejected fast jump) for a jitter-free crosshair, which
+          // smears or drops exactly the transients saccade/nystagmus/pursuit
+          // scoring depends on. Falls back to the smoothed fields if a caller
+          // hasn't populated the analytics ones (e.g. older LiveData shape).
           gazeHistoryRef.current.push({
-            x: curLiveData.gazeX, y: curLiveData.gazeY,
+            x: curLiveData.analyticsGazeX ?? curLiveData.gazeX,
+            y: curLiveData.analyticsGazeY ?? curLiveData.gazeY,
             t: curLiveData.gazeT || now,
             hasIris: curLiveData.faceVisible && curLiveData.hasIris && !curLiveData.isBlink,
             isBlink: curLiveData.isBlink ?? false,
             confidence: curLiveData.faceVisible ? (curLiveData.confidence ?? 0.9) : 0.05,
-            leftEyeX: curLiveData.leftEyeX, leftEyeY: curLiveData.leftEyeY,
-            rightEyeX: curLiveData.rightEyeX, rightEyeY: curLiveData.rightEyeY,
+            leftEyeX: curLiveData.analyticsLeftEyeX ?? curLiveData.leftEyeX,
+            leftEyeY: curLiveData.analyticsLeftEyeY ?? curLiveData.leftEyeY,
+            rightEyeX: curLiveData.analyticsRightEyeX ?? curLiveData.rightEyeX,
+            rightEyeY: curLiveData.analyticsRightEyeY ?? curLiveData.rightEyeY,
           });
           headHistoryRef.current.push({ t: curLiveData.gazeT || now, yaw: curLiveData.headYaw });
         }
@@ -424,6 +444,8 @@ export const RedDotPursuitTab: React.FC<{
     targetHistoryRef.current = [];
     waveformBufferRef.current = [];
     setWaveformSamples([]);
+    everTestedRef.current = false;
+    setHasCompletedTest(false);
 
     testStartRef.current = performance.now();
     startTimeRef.current = performance.now();
@@ -481,6 +503,8 @@ export const RedDotPursuitTab: React.FC<{
       timerIntervalRef.current = null;
     }
     setIsTesting(false);
+    everTestedRef.current = true;
+    setHasCompletedTest(true);
     const targets = targetHistoryRef.current;
     const gazes = gazeHistoryRef.current;
     const heads = headHistoryRef.current;
@@ -1075,6 +1099,7 @@ export const RedDotPursuitTab: React.FC<{
           pattern={pattern}
           isTesting={isTesting}
           cameraState={cameraState}
+          testCompleted={hasCompletedTest}
         />
       </div>
     </div>

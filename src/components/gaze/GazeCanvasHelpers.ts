@@ -11,12 +11,29 @@ export const NYSTAGMUS_PATTERNS: PursuitPattern[] = ['spontaneous', 'gaze-left',
 
 /** Deterministic pseudo-random target amplitudes for the random saccade test — fixed set, shuffled by a seeded hash so the same step index always resolves to the same position within a render. */
 const RANDOM_SACCADE_X = [0.12, 0.22, 0.30, 0.5, 0.70, 0.78, 0.88];
-function randomSaccadeX(stepIdx: number): number {
+function hashStep(stepIdx: number): number {
   let h = (stepIdx + 1) * 0x9e3779b9;
   h = (h ^ (h >>> 16)) >>> 0;
   h = Math.imul(h, 0x85ebca6b) >>> 0;
   h = (h ^ (h >>> 13)) >>> 0;
-  return RANDOM_SACCADE_X[h % RANDOM_SACCADE_X.length];
+  return h;
+}
+/**
+ * The whole point of this test is a saccade on every step — a raw hash can
+ * (and did) land on the same position two steps running, which asks for no
+ * eye movement at all. Nudges forward through the position list whenever it
+ * would repeat the *actually displayed* previous step (not that step's raw,
+ * possibly-since-nudged hash), so every transition is guaranteed to be a real
+ * saccade. Recursion depth is capped by step count (~33 for a 60s test at
+ * 1.8s/step), so this stays cheap even called every animation frame.
+ */
+function randomSaccadeX(stepIdx: number): number {
+  const idx = hashStep(stepIdx) % RANDOM_SACCADE_X.length;
+  if (stepIdx <= 0) return RANDOM_SACCADE_X[idx];
+  const prevValue = randomSaccadeX(stepIdx - 1);
+  const prevIdx = RANDOM_SACCADE_X.indexOf(prevValue);
+  const finalIdx = idx === prevIdx ? (idx + 1) % RANDOM_SACCADE_X.length : idx;
+  return RANDOM_SACCADE_X[finalIdx];
 }
 
 export interface LiveData {
@@ -40,6 +57,21 @@ export interface LiveData {
   rightEyeY?: number;
   distanceCm?: number;
   distanceStatus?: 'optimal' | 'too_far' | 'too_close' | 'searching';
+  /**
+   * Strict, un-smoothed gaze position — GazeStabilizer.processDual()'s
+   * "analytics" stream. `gazeX`/`gazeY` above run through a One-Euro filter
+   * (and an outlier-spike rejector that can hold position through a fast
+   * jump), which is right for a jitter-free on-screen crosshair but wrong for
+   * scoring: it smears or drops the very transients saccade/nystagmus
+   * detection depends on. Test recorders should push these fields, not
+   * `gazeX`/`gazeY`, into whatever gets scored.
+   */
+  analyticsGazeX?: number;
+  analyticsGazeY?: number;
+  analyticsLeftEyeX?: number;
+  analyticsLeftEyeY?: number;
+  analyticsRightEyeX?: number;
+  analyticsRightEyeY?: number;
 }
 
 export interface SessionData {

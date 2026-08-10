@@ -158,10 +158,14 @@ export const AIGazeAnalyticsEngine: React.FC = () => {
 
       if (face) {
         const rawGp = face.gazePoint;
-        const gp = stabilizerRef.current.process(rawGp);
+        // `displayGaze` (One-Euro filtered + outlier-held) is right for the
+        // on-screen crosshair; scoring must use `analyticsGaze` instead — it
+        // is the strict, un-smoothed stream, since the filter otherwise smears
+        // or drops the fast transients saccade/nystagmus detection needs.
+        const { displayGaze: gp, analyticsGaze } = stabilizerRef.current.processDual(rawGp);
 
-        if (recordingRef.current && !gp.isBlink && (gp.confidence ?? 1) >= 0.3) {
-          gazeHistoryRef.current.push(gp);
+        if (recordingRef.current && !analyticsGaze.isBlink && (analyticsGaze.confidence ?? 1) >= 0.3) {
+          gazeHistoryRef.current.push(analyticsGaze);
           headHistoryRef.current.push({ t: now, yaw: face.pose.yaw });
         }
 
@@ -211,6 +215,12 @@ export const AIGazeAnalyticsEngine: React.FC = () => {
             leftEyeY: gp.leftEyeY ?? gp.y,
             rightEyeX: gp.rightEyeX ?? gp.x,
             rightEyeY: gp.rightEyeY ?? gp.y,
+            analyticsGazeX: analyticsGaze.x,
+            analyticsGazeY: analyticsGaze.y,
+            analyticsLeftEyeX: analyticsGaze.leftEyeX ?? analyticsGaze.x,
+            analyticsLeftEyeY: analyticsGaze.leftEyeY ?? analyticsGaze.y,
+            analyticsRightEyeX: analyticsGaze.rightEyeX ?? analyticsGaze.x,
+            analyticsRightEyeY: analyticsGaze.rightEyeY ?? analyticsGaze.y,
             distanceCm,
             distanceStatus,
           });

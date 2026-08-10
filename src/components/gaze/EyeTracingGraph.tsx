@@ -8,10 +8,12 @@ interface EyeTracingGraphProps {
   pattern: PursuitPattern;
   isTesting: boolean;
   cameraState: CameraState;
+  /** True once a test has completed — the graph freezes on that recording rather than resuming live camera streaming. */
+  testCompleted?: boolean;
 }
 
 export const EyeTracingGraph: React.FC<EyeTracingGraphProps> = ({
-  hi, samples, pattern, isTesting, cameraState,
+  hi, samples, pattern, isTesting, cameraState, testCompleted = false,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [axisMode, setAxisMode] = useState<'horizontal' | 'vertical' | 'magnitude'>('horizontal');
@@ -320,10 +322,14 @@ export const EyeTracingGraph: React.FC<EyeTracingGraphProps> = ({
             <span>{hi ? 'नेत्र स्थिति एवं वेवफॉर्म ट्रैकिंग ग्राफ' : 'Eye Position / Eye Tracing Graph'}</span>
             <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
               isTesting ? 'bg-red-500/20 text-red-300 border border-red-500/40 animate-pulse'
+                : testCompleted ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
                 : cameraState === 'live' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
                 : 'bg-slate-800 text-slate-400'
             }`}>
-              {isTesting ? (hi ? '● रिकॉर्डिंग लाइव' : '● TEST RECORDING') : cameraState === 'live' ? (hi ? '● लाइव स्ट्रीम' : '● LIVE STREAMING') : (hi ? 'स्टैंडबाय' : 'STANDBY')}
+              {isTesting ? (hi ? '● रिकॉर्डिंग लाइव' : '● TEST RECORDING')
+                : testCompleted ? (hi ? '✓ टेस्ट पूर्ण — समीक्षा हेतु स्थिर' : '✓ TEST COMPLETE — FROZEN FOR REVIEW')
+                : cameraState === 'live' ? (hi ? '● लाइव स्ट्रीम' : '● LIVE STREAMING')
+                : (hi ? 'स्टैंडबाय' : 'STANDBY')}
             </span>
           </div>
           <p className="text-xs text-slate-400 mt-0.5">

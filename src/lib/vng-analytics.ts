@@ -214,19 +214,25 @@ export function scoreSmoothPursuitVNG(
       instantaneousGains.push(Math.min(Math.max(projGain, -1.0), 1.25));
     }
 
-    // Retinal slip velocity (deg/s): Windowed velocity difference
+    // Retinal slip velocity (deg/s): Windowed velocity difference, capped at physiological ceiling
     const slipVx = (tvx - gvx);
     const slipVy = (tvy - gvy);
     const slipMagNorm = Math.sqrt(slipVx * slipVx + slipVy * slipVy);
-    slipVelocitiesDeg.push(slipMagNorm * degPerUnit);
+    const slipDeg = Math.min(slipMagNorm * degPerUnit, 200); // 200°/s physiological ceiling for smooth pursuit
+    slipVelocitiesDeg.push(slipDeg);
   }
 
   const rawVelocityGain = sumTgtSq > 1e-9 ? sumDot / sumTgtSq : 0;
-  const gainCi = bootstrapConfidenceInterval(instantaneousGains.length > 0 ? instantaneousGains : [rawVelocityGain], 300);
+  const gainSamples = instantaneousGains.length > 0 ? instantaneousGains : [rawVelocityGain];
+  const gainCi = bootstrapConfidenceInterval(gainSamples, 300);
 
-  // Guarantee point estimate is strictly bounded within its confidence interval bounds (signed [-1.0, 1.05])
-  const medianGain = instantaneousGains.length > 5 ? gainCi.median : rawVelocityGain;
-  const velocityGain = Math.min(Math.max(parseFloat(medianGain.toFixed(2)), Math.max(-1.0, gainCi.ciLower)), 1.05);
+  // Guarantee the point estimate is strictly inside [ciLower, ciUpper] on every code path.
+  // We use the bootstrap median (stable estimator) as the point estimate, then clamp it to
+  // its own CI bounds — so CI can never contradict the reported number.
+  const rawPointEstimate = gainCi.median;
+  const velocityGain = parseFloat(
+    Math.min(Math.max(rawPointEstimate, Math.max(-1.0, gainCi.ciLower)), Math.min(1.05, gainCi.ciUpper)).toFixed(2)
+  );
 
   const denom = Math.sqrt(sumTgtSq * sumGazeSq);
   const directionalAgreement =
@@ -1053,17 +1059,6 @@ export function computeHospitalPursuitGains(
       leftwardGainPct: Math.round(rawLeft * scaleFreq),
       rightwardGainPct: Math.round(rawRight * scaleFreq),
     };
-  };
-
-  return {
-    freq01Hz: {
-      rightEye: evaluateEyeFreq(0.1, 'right'),
-      leftEye: evaluateEyeFreq(0.1, 'left'),
-    },
-    freq02Hz: {
-      rightEye: evaluateEyeFreq(0.2, 'right'),
-      leftEye: evaluateEyeFreq(0.2, 'left'),
-    },
   };
 
   return {

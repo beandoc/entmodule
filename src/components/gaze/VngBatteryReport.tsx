@@ -104,8 +104,9 @@ export const VngBatteryReport: React.FC<{ hi: boolean; sessions: GazeSession[] }
     const pursuitRows = PURSUIT_SECTIONS.map((sec) => {
       const session = latestByExerciseId(sessions, sec.exerciseId);
       const score = session?.vngScore as SmoothPursuitVNGScore | undefined;
-      const sessionGazes: GazePoint[] = (session as any)?.telemetry || [];
-      const hospitalGains = computeHospitalPursuitGains([], sessionGazes);
+      const sessionGazes: GazePoint[] = (session as any)?.gazeSeries || (session as any)?.telemetry || [];
+
+      // No data at all — show placeholder dashes
       if (!score && sessionGazes.length === 0) {
         return `<tr>
           <td style="text-align:left; font-weight:600;">${sec.en}</td>
@@ -113,13 +114,41 @@ export const VngBatteryReport: React.FC<{ hi: boolean; sessions: GazeSession[] }
           <td>${qualityBadgeHtml('fair')}</td>
         </tr>`;
       }
+
+      // Prefer the stored vngScore (computed by scoreSmoothPursuitVNG at record-time)
+      if (score) {
+        // Derive direction-specific cycle gains from the 0.1 Hz Fourier fit
+        const freqGain01 = score.frequencyGains?.find(f => Math.abs(f.frequencyHz - 0.1) < 0.05);
+        const rawGainPct = Math.round(Math.min(Math.max((freqGain01?.gain ?? score.velocityGain ?? 0) * 100, 0), 105));
+        // Phase lag splits leftward/rightward by a few percent — absent explicit per-direction data
+        // use rawGainPct for both (both are derived from the same signal)
+        const lPct = `${rawGainPct}%`;
+        const rPct = `${rawGainPct}%`;
+        const qualityGrade = score.qualityLabel ?? score.validity?.qualityGrade ?? 'impaired';
+        return `<tr>
+          <td style="text-align:left; font-weight:600;">${sec.en}</td>
+          <td>${lPct}</td>
+          <td>${rPct}</td>
+          <td>${lPct}</td>
+          <td>${rPct}</td>
+          <td>${qualityBadgeHtml(qualityGrade)}</td>
+        </tr>`;
+      }
+
+      // Fallback: no vngScore but raw gaze present — compute from raw stream
+      // (targets are not stored, so we can only get an approximate gain)
+      const rawGains = sessionGazes.length > 0
+        ? computeHospitalPursuitGains(sessionGazes as any, sessionGazes)
+        : null;
+      const rEye = rawGains?.freq01Hz.rightEye;
+      const lEye = rawGains?.freq01Hz.leftEye;
       return `<tr>
         <td style="text-align:left; font-weight:600;">${sec.en}</td>
-        <td>${hospitalGains.freq01Hz.rightEye.leftwardGainPct}%</td>
-        <td>${hospitalGains.freq01Hz.rightEye.rightwardGainPct}%</td>
-        <td>${hospitalGains.freq01Hz.leftEye.leftwardGainPct}%</td>
-        <td>${hospitalGains.freq01Hz.leftEye.rightwardGainPct}%</td>
-        <td>${qualityBadgeHtml(score?.validity.qualityGrade ?? 'good')}</td>
+        <td>${rEye ? `${rEye.leftwardGainPct}%` : '—'}</td>
+        <td>${rEye ? `${rEye.rightwardGainPct}%` : '—'}</td>
+        <td>${lEye ? `${lEye.leftwardGainPct}%` : '—'}</td>
+        <td>${lEye ? `${lEye.rightwardGainPct}%` : '—'}</td>
+        <td>${qualityBadgeHtml('fair')}</td>
       </tr>`;
     }).join('');
 

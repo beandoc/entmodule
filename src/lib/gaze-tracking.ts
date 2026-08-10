@@ -20,7 +20,7 @@
  * with (0,0) = top-left of the *mirrored* image the patient sees.
  */
 
-import { scoreSmoothPursuitVNG } from './vng-analytics.js';
+import { scoreSmoothPursuitVNG } from './vng-analytics';
 
 /* =========================================================== types */
 

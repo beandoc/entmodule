@@ -4,7 +4,8 @@ import {
   Mic, MicOff, Maximize2, Minimize2, Clock, Sparkles, Activity, Target, Brain
 } from 'lucide-react';
 import {
-  CameraState, LiveData, PursuitPattern, EyeTracingPoint, targetPositionAt, HUD_SYNC_INTERVAL_MS
+  CameraState, LiveData, PursuitPattern, EyeTracingPoint, targetPositionAt, HUD_SYNC_INTERVAL_MS,
+  NYSTAGMUS_PATTERNS,
 } from './GazeCanvasHelpers';
 import { EyeTracingGraph } from './EyeTracingGraph';
 import { VNGReportCard } from '../VNGReportCard';
@@ -16,9 +17,14 @@ import {
   detectFixations, detectNystagmusHeuristic, computeAntiSaccadeErrorRate, generateInsight,
 } from '@/lib/gaze-tracking';
 import {
-  SmoothPursuitVNGScore, VorX1Score, VorX2Score, SaccadeScore, OknScore,
-  scoreSmoothPursuitVNG, scoreVorX1, scoreVorX2, scoreSaccades, scoreOKN
+  SmoothPursuitVNGScore, VorX1Score, VorX2Score, SaccadeScore, OknScore, NystagmusVNGScore,
+  scoreSmoothPursuitVNG, scoreVorX1, scoreVorX2, scoreSaccades, scoreOKN, scoreNystagmusVNG
 } from '@/lib/vng-analytics';
+
+/** Nystagmus/gaze-hold screens follow clinical VNG convention (30s per hold); pursuit/saccade/OKN keep the existing 60s window. */
+function testDurationSec(pattern: PursuitPattern): number {
+  return NYSTAGMUS_PATTERNS.includes(pattern) ? 30 : 60;
+}
 
 function MiniMetric({ label, value }: { label: string; value: string }) {
   return (
@@ -83,6 +89,7 @@ export const RedDotPursuitTab: React.FC<{
   const [vngVorX2Score, setVngVorX2Score] = useState<VorX2Score | null>(null);
   const [vngSaccadeScore, setVngSaccadeScore] = useState<SaccadeScore | null>(null);
   const [vngOknScore, setVngOknScore] = useState<OknScore | null>(null);
+  const [vngNystagmusScore, setVngNystagmusScore] = useState<NystagmusVNGScore | null>(null);
 
   // Eye Tracing Real-Time Waveform Samples
   const waveformBufferRef = useRef<EyeTracingPoint[]>([]);
@@ -428,8 +435,9 @@ export const RedDotPursuitTab: React.FC<{
     setVngVorX2Score(null);
     setVngSaccadeScore(null);
     setVngOknScore(null);
+    setVngNystagmusScore(null);
     setIsTesting(true);
-    setTimeLeftSec(60);
+    setTimeLeftSec(testDurationSec(pattern));
 
     if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
     timerIntervalRef.current = setInterval(() => {
@@ -443,13 +451,26 @@ export const RedDotPursuitTab: React.FC<{
       });
     }, 1000);
 
+    const durationSec = testDurationSec(pattern);
     const startMsg = hi
       ? (pattern === 'vor-x2'
-          ? '60 सेकंड का VOR x2 गेज़ टेस्ट शुरू हो रहा है। स्क्रीन पर बिंदु के विपरीत दिशा में अपना सिर घुमाएं।'
-          : '60 सेकंड का स्मूथ परस्यूट गेज़ टेस्ट शुरू हो रहा है। अपना सिर स्थिर रखें और लाल बिंदु को अपनी आँखों से फॉलो करें।')
+          ? `${durationSec} सेकंड का VOR x2 गेज़ टेस्ट शुरू हो रहा है। स्क्रीन पर बिंदु के विपरीत दिशा में अपना सिर घुमाएं।`
+          : pattern === 'spontaneous'
+          ? `${durationSec} सेकंड की स्क्रीनिंग शुरू हो रही है। सिर स्थिर रखें और बीच के बिंदु को सहजता से देखें — किसी विशेष कार्य की आवश्यकता नहीं।`
+          : NYSTAGMUS_PATTERNS.includes(pattern)
+          ? `${durationSec} सेकंड की गेज़-होल्ड स्क्रीनिंग शुरू हो रही है। सिर बिल्कुल स्थिर रखें और बिंदु पर स्थिर दृष्टि बनाए रखें।`
+          : pattern === 'random-saccade'
+          ? `${durationSec} सेकंड का रैंडम सैकेड टेस्ट शुरू हो रहा है। सिर स्थिर रखें और बिंदु के हर उछाल को तुरंत आँखों से पकड़ें।`
+          : `${durationSec} सेकंड का स्मूथ परस्यूट गेज़ टेस्ट शुरू हो रहा है। अपना सिर स्थिर रखें और लाल बिंदु को अपनी आँखों से फॉलो करें।`)
       : (pattern === 'vor-x2'
-          ? 'Starting 60-second VOR x2 gaze test. Move your head in the opposite direction of the moving red dot.'
-          : 'Starting 60-second smooth pursuit gaze test. Keep your head still and track the moving red dot with your eyes.');
+          ? `Starting ${durationSec}-second VOR x2 gaze test. Move your head in the opposite direction of the moving red dot.`
+          : pattern === 'spontaneous'
+          ? `Starting ${durationSec}-second screening. Keep your head still and rest your gaze softly on the center point — no active task required.`
+          : NYSTAGMUS_PATTERNS.includes(pattern)
+          ? `Starting ${durationSec}-second gaze-hold screening. Keep your head completely still and hold your gaze steadily on the target.`
+          : pattern === 'random-saccade'
+          ? `Starting ${durationSec}-second random saccade test. Keep your head still and catch each jump of the dot immediately with your eyes.`
+          : `Starting ${durationSec}-second smooth pursuit gaze test. Keep your head still and track the moving red dot with your eyes.`);
 
     speakInstruction(startMsg);
   }, [cameraState, onStartCamera, onEnsureModelReady, hi, pattern, speakInstruction]);
@@ -469,19 +490,34 @@ export const RedDotPursuitTab: React.FC<{
     setResultScore(scoreSmoothPursuit(targets, gazes, saccades, lang));
     setVorResult(scoreVOR(gazes, heads));
 
+    // Captured alongside the `setVng*Score` state updates (which are async) so
+    // the freshly-computed score can also be persisted onto `newSession` below
+    // in this same call, rather than reading stale React state.
+    let vngScoreForSession:
+      | SmoothPursuitVNGScore | VorX1Score | VorX2Score | SaccadeScore | OknScore | NystagmusVNGScore | null = null;
+
     if (pattern === 'vor-x2') {
       const opp = validateVorX2Opposition(targets, heads);
       setVorOpposition(opp);
-      setVngVorX2Score(scoreVorX2(targets, gazes, heads));
+      vngScoreForSession = scoreVorX2(targets, gazes, heads);
+      setVngVorX2Score(vngScoreForSession);
     } else if (pattern === 'optokinetic') {
       setOknResult(computeOptokineticMetrics(gazes, targets));
-      setVngOknScore(scoreOKN(gazes, saccades));
-    } else if (pattern === 'saccadic') {
-      setVngSaccadeScore(scoreSaccades(targets, gazes, saccades));
+      vngScoreForSession = scoreOKN(gazes, saccades);
+      setVngOknScore(vngScoreForSession);
+    } else if (pattern === 'saccadic' || pattern === 'random-saccade') {
+      vngScoreForSession = scoreSaccades(targets, gazes, saccades);
+      setVngSaccadeScore(vngScoreForSession);
+    } else if (pattern === 'spontaneous' || NYSTAGMUS_PATTERNS.includes(pattern)) {
+      const axisHint = pattern === 'gaze-up' || pattern === 'gaze-down' ? 'vertical' : 'horizontal';
+      vngScoreForSession = scoreNystagmusVNG(gazes, axisHint, lang);
+      setVngNystagmusScore(vngScoreForSession);
     } else if (pattern === 'vertical') {
-      setVngPursuitScore(scoreSmoothPursuitVNG(targets, gazes, saccades));
+      vngScoreForSession = scoreSmoothPursuitVNG(targets, gazes, saccades);
+      setVngPursuitScore(vngScoreForSession);
     } else {
-      setVngPursuitScore(scoreSmoothPursuitVNG(targets, gazes, saccades));
+      vngScoreForSession = scoreSmoothPursuitVNG(targets, gazes, saccades);
+      setVngPursuitScore(vngScoreForSession);
       setVngVorX1Score(scoreVorX1({ x: 0.5, y: 0.5 }, gazes, heads));
     }
 
@@ -516,6 +552,7 @@ export const RedDotPursuitTab: React.FC<{
       analytics,
       durationMs,
       createdAt: new Date().toISOString(),
+      vngScore: vngScoreForSession,
     };
 
     saveGazeSession(newSession);
@@ -604,8 +641,14 @@ export const RedDotPursuitTab: React.FC<{
               { id: 'horizontal', label: hi ? '↔ क्षैतिज स्मूथ परस्यूट' : '↔ Smooth Pursuit (Horizontal)' },
               { id: 'vertical', label: hi ? '↕ लंबवत स्मूथ परस्यूट' : '↕ Smooth Pursuit (Vertical)' },
               { id: 'saccadic', label: hi ? '⚡ सैकेडिक स्टेप टेस्ट' : '⚡ Saccadic Step Test' },
+              { id: 'random-saccade', label: hi ? '🎲 रैंडम सैकेड टेस्ट' : '🎲 Random Saccade Test' },
               { id: 'optokinetic', label: hi ? '🌀 ऑप्टोकाइनेटिक OKN (20°/s)' : '🌀 Optokinetic OKN (20°/s)' },
               { id: 'vor-x2', label: hi ? '🔀 VOR x2' : '🔀 VOR x2' },
+              { id: 'spontaneous', label: hi ? '👁 स्वतःस्फूर्त निस्टागमस' : '👁 Spontaneous Nystagmus' },
+              { id: 'gaze-left', label: hi ? '← गेज़-प्रेरित (बाएं)' : '← Gaze-Induced (Left)' },
+              { id: 'gaze-right', label: hi ? '→ गेज़-प्रेरित (दाएं)' : '→ Gaze-Induced (Right)' },
+              { id: 'gaze-up', label: hi ? '↑ गेज़-प्रेरित (ऊपर)' : '↑ Gaze-Induced (Up)' },
+              { id: 'gaze-down', label: hi ? '↓ गेज़-प्रेरित (नीचे)' : '↓ Gaze-Induced (Down)' },
             ] as const
           ).map((p) => (
             <button
@@ -911,8 +954,36 @@ export const RedDotPursuitTab: React.FC<{
             />
           )}
 
+          {/* Nystagmus / Gaze-Hold Screening Card */}
+          {vngNystagmusScore && (
+            <div className="bg-gradient-to-br from-indigo-950/60 to-slate-900 rounded-2xl border border-indigo-500/30 p-4 space-y-3">
+              <h3 className="text-xs font-bold text-indigo-300 uppercase tracking-widest">
+                {hi ? 'निस्टागमस स्क्रीनिंग (SPV / बीट्स प्रति 30 सेकंड)' : 'Nystagmus Screening (SPV / Beats per 30s)'}
+              </h3>
+              <div className="grid grid-cols-2 gap-2 text-center">
+                <MiniMetric label={hi ? 'दायाँ नेत्र SPV' : 'Right Eye SPV'} value={`${vngNystagmusScore.rightEye.spvDegPerSec.toFixed(1)}°/s`} />
+                <MiniMetric label={hi ? 'बायाँ नेत्र SPV' : 'Left Eye SPV'} value={`${vngNystagmusScore.leftEye.spvDegPerSec.toFixed(1)}°/s`} />
+                <MiniMetric label={hi ? 'दायाँ नेत्र बीट्स/30s' : 'Right Eye Beats/30s'} value={String(vngNystagmusScore.rightEye.beatsPer30Sec)} />
+                <MiniMetric label={hi ? 'बायाँ नेत्र बीट्स/30s' : 'Left Eye Beats/30s'} value={String(vngNystagmusScore.leftEye.beatsPer30Sec)} />
+              </div>
+              {!vngNystagmusScore.eyesResolvedSeparately && (
+                <p className="text-[11px] text-amber-200 bg-amber-950/40 border border-amber-500/30 p-2 rounded-lg">
+                  {hi
+                    ? 'बाएं/दाएं नेत्र अलग से नहीं मिल पाए — दोनों स्तंभ संयुक्त गेज़ संकेत से गणना किए गए हैं।'
+                    : 'Left/right eye channels were not separately available — both columns were computed from the combined gaze signal.'}
+                </p>
+              )}
+              <p className="text-xs text-slate-200 bg-white/5 p-2.5 rounded-xl border border-white/5">{vngNystagmusScore.clinicalGuidance}</p>
+              <p className="text-[11px] text-amber-200 bg-amber-950/40 border border-amber-500/30 p-2.5 rounded-xl leading-relaxed">
+                {hi
+                  ? '⚠️ यह स्क्रीनिंग गॉगल्स के बिना दर्ज की गई है, इसलिए दृष्टि दमन सक्रिय रहा — क्लिनिकल VNG अंधेरे में दृष्टि हटाकर परिधीय निस्टागमस को उजागर करता है। सामान्य परिणाम इसे खारिज नहीं करता; केवल सकारात्मक निष्कर्ष को चिकित्सक द्वारा समीक्षा हेतु आगे बढ़ाएं।'
+                  : '⚠️ Recorded without goggles denying vision, so visual fixation suppression stayed active — clinical VNG unmasks peripheral nystagmus by removing vision in darkness. A normal result here does not rule that out; only a positive finding should be flagged for clinician review.'}
+              </p>
+            </div>
+          )}
+
           {/* Test Results Card */}
-          {resultScore && (
+          {resultScore && !NYSTAGMUS_PATTERNS.includes(pattern) && (
             <div className="bg-gradient-to-br from-teal-950/60 to-slate-900 rounded-2xl border border-teal-500/30 p-4 space-y-3">
               <h3 className="text-xs font-bold text-teal-300 uppercase tracking-widest">{hi ? 'परस्यूट परिणाम स्कोर' : 'Pursuit Evaluation Score'}</h3>
               <div className="grid grid-cols-2 gap-2 text-center">

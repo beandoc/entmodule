@@ -1,8 +1,23 @@
 import { GazePoint, GazeAnalytics, oknTargetX } from '@/lib/gaze-tracking';
 
-export type Tab = 'live' | 'pursuit' | 'session' | 'longitudinal';
+export type Tab = 'live' | 'pursuit' | 'session' | 'longitudinal' | 'report';
 export type CameraState = 'idle' | 'starting' | 'live' | 'error';
-export type PursuitPattern = 'horizontal' | 'vertical' | 'circular' | 'vor-x2' | 'saccadic' | 'optokinetic';
+export type PursuitPattern =
+  | 'horizontal' | 'vertical' | 'circular' | 'vor-x2' | 'saccadic' | 'optokinetic'
+  | 'spontaneous' | 'gaze-left' | 'gaze-right' | 'gaze-up' | 'gaze-down' | 'random-saccade';
+
+/** Patterns that hold a static (or center) target and are scored as a nystagmus/gaze-hold screen. */
+export const NYSTAGMUS_PATTERNS: PursuitPattern[] = ['spontaneous', 'gaze-left', 'gaze-right', 'gaze-up', 'gaze-down'];
+
+/** Deterministic pseudo-random target amplitudes for the random saccade test — fixed set, shuffled by a seeded hash so the same step index always resolves to the same position within a render. */
+const RANDOM_SACCADE_X = [0.12, 0.22, 0.30, 0.5, 0.70, 0.78, 0.88];
+function randomSaccadeX(stepIdx: number): number {
+  let h = (stepIdx + 1) * 0x9e3779b9;
+  h = (h ^ (h >>> 16)) >>> 0;
+  h = Math.imul(h, 0x85ebca6b) >>> 0;
+  h = (h ^ (h >>> 13)) >>> 0;
+  return RANDOM_SACCADE_X[h % RANDOM_SACCADE_X.length];
+}
 
 export interface LiveData {
   gazeX: number;
@@ -85,6 +100,20 @@ export function targetPositionAt(
     }
     case 'optokinetic':
       return { x: oknTargetX(elapsedSec), y: 0.5 };
+    case 'spontaneous':
+      return { x: 0.5, y: 0.5 };
+    case 'gaze-left':
+      return { x: 0.15, y: 0.5 };
+    case 'gaze-right':
+      return { x: 0.85, y: 0.5 };
+    case 'gaze-up':
+      return { x: 0.5, y: 0.22 };
+    case 'gaze-down':
+      return { x: 0.5, y: 0.78 };
+    case 'random-saccade': {
+      const stepIdx = Math.floor(elapsedSec / 1.8);
+      return { x: randomSaccadeX(stepIdx), y: 0.5 };
+    }
   }
 }
 

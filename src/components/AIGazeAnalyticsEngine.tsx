@@ -41,6 +41,7 @@ import {
 import { RedDotPursuitTab } from './gaze/RedDotPursuitStudio';
 import { Calibration5PointModal } from './gaze/Calibration5PointWizard';
 import { SessionHistoryTab, LongitudinalTab } from './gaze/GazeSessionHistory';
+import { VngBatteryReport } from './gaze/VngBatteryReport';
 
 /* ============================================================ Main Component */
 export const AIGazeAnalyticsEngine: React.FC = () => {
@@ -405,7 +406,7 @@ export const AIGazeAnalyticsEngine: React.FC = () => {
         {/* Navigation Tabs */}
         <div className="max-w-7xl mx-auto px-4 sm:px-6 pb-3">
           <div className="flex gap-1 bg-white/5 rounded-xl p-1 w-fit border border-white/5 flex-wrap">
-            {(['live', 'pursuit', 'session', 'longitudinal'] as Tab[]).map(t => (
+            {(['live', 'pursuit', 'session', 'longitudinal', 'report'] as Tab[]).map(t => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
@@ -418,7 +419,8 @@ export const AIGazeAnalyticsEngine: React.FC = () => {
                 {t === 'live' ? (hi ? '🎥 लाइव स्टूडियो' : '🎥 Live Studio')
                   : t === 'pursuit' ? (hi ? '🔴 रेड-डॉट परस्यूट टेस्ट (VRT)' : '🔴 Red-Dot Pursuit & VOR x2 Test')
                   : t === 'session' ? (hi ? '📊 सत्र विश्लेषण' : '📊 Session Analytics')
-                  : (hi ? '📈 दीर्घकालिक' : '📈 Longitudinal')}
+                  : t === 'longitudinal' ? (hi ? '📈 दीर्घकालिक' : '📈 Longitudinal')
+                  : (hi ? '🧾 VNG रिपोर्ट' : '🧾 VNG Report')}
               </button>
             ))}
           </div>
@@ -483,6 +485,9 @@ export const AIGazeAnalyticsEngine: React.FC = () => {
         )}
         {tab === 'longitudinal' && (
           <LongitudinalTab hi={hi} sessions={historySessions} adherence={adherence} />
+        )}
+        {tab === 'report' && (
+          <VngBatteryReport hi={hi} sessions={historySessions} />
         )}
       </div>
 

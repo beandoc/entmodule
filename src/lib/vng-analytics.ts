@@ -10,7 +10,7 @@
  * Includes robust statistics (median, trimmed mean, MAD, bootstrap CIs).
  */
 
-import { GazePoint, Saccade } from './gaze-tracking';
+import { GazePoint, Saccade, computeSlowPhaseVelocity } from './gaze-tracking';
 import { evaluateGazeValidity, HeadPoint, ValidityResult } from './gaze-validity';
 import { evaluateBinocularAnalytics, BinocularAnalyticsReport } from './gaze-binocular';
 
@@ -714,6 +714,85 @@ export function scoreOKN(
     qualityLabel,
     clinicalGuidance,
   };
+}
+
+/* =========================================================== 6. Nystagmus / Gaze-Hold Screening Engine */
+
+export interface NystagmusEyeMetrics {
+  spvDegPerSec: number;
+  beatsPer30Sec: number;
+  fastPhaseDirection: 'left' | 'right' | 'up' | 'down' | 'none';
+}
+
+export interface NystagmusVNGScore {
+  rightEye: NystagmusEyeMetrics;
+  leftEye: NystagmusEyeMetrics;
+  axis: 'horizontal' | 'vertical';
+  /** False when per-eye channels were unavailable and both eyes fall back to the combined gaze signal. */
+  eyesResolvedSeparately: boolean;
+  validity: ValidityResult;
+  qualityLabel: 'excellent' | 'good' | 'fair' | 'impaired';
+  clinicalGuidance: string;
+}
+
+const EMPTY_EYE_METRICS: NystagmusEyeMetrics = { spvDegPerSec: 0, beatsPer30Sec: 0, fastPhaseDirection: 'none' };
+
+/**
+ * Slow-phase-velocity screen for spontaneous / gaze-evoked nystagmus, scored
+ * separately per eye to match a clinical VNG report's Right/Left Eye SPV and
+ * Beats/30sec columns.
+ *
+ * This recording is taken with the patient fixating a visible on-screen
+ * target (no infrared/Frenzel goggles denying vision), so visual fixation
+ * suppression is intact throughout — unlike a clinical VNG run in darkness,
+ * which is exactly what unmasks peripheral vestibular nystagmus. A clean
+ * (no-beat) result here therefore cannot rule out a fixation-suppressed
+ * peripheral nystagmus; only a positive finding is informative on its own.
+ */
+export function scoreNystagmusVNG(
+  gazes: GazePoint[],
+  axisHint: 'horizontal' | 'vertical',
+  locale: 'en' | 'hi' = 'en'
+): NystagmusVNGScore {
+  const validity = evaluateGazeValidity(gazes, undefined, undefined, { mode: 'fixation', minWindowSec: 10 });
+
+  const durationSec = gazes.length >= 2 ? (gazes[gazes.length - 1].t - gazes[0].t) / 1000 : 0;
+  const scaleTo30s = (beats: number) => (durationSec > 0 ? parseFloat(((beats * 30) / durationSec).toFixed(1)) : 0);
+
+  const rightSamples = gazes.filter((g) => g.rightEyeX !== undefined && g.rightEyeY !== undefined);
+  const leftSamples = gazes.filter((g) => g.leftEyeX !== undefined && g.leftEyeY !== undefined);
+  const eyesResolvedSeparately = rightSamples.length >= 8 && leftSamples.length >= 8;
+
+  const toEyePoints = (samples: GazePoint[], eye: 'left' | 'right'): GazePoint[] =>
+    samples.map((g) => ({
+      ...g,
+      x: eye === 'right' ? g.rightEyeX! : g.leftEyeX!,
+      y: eye === 'right' ? g.rightEyeY! : g.leftEyeY!,
+    }));
+
+  const analyseEye = (samples: GazePoint[]): NystagmusEyeMetrics => {
+    if (samples.length < 8) return EMPTY_EYE_METRICS;
+    const analysis = computeSlowPhaseVelocity(samples, axisHint);
+    return {
+      spvDegPerSec: analysis.spvDegPerSec,
+      beatsPer30Sec: scaleTo30s(analysis.beats),
+      fastPhaseDirection: analysis.fastPhaseDirection,
+    };
+  };
+
+  const rightEye = eyesResolvedSeparately ? analyseEye(toEyePoints(rightSamples, 'right')) : analyseEye(gazes);
+  const leftEye = eyesResolvedSeparately ? analyseEye(toEyePoints(leftSamples, 'left')) : analyseEye(gazes);
+
+  const maxSpv = Math.max(rightEye.spvDegPerSec, leftEye.spvDegPerSec);
+  const qualityLabel: NystagmusVNGScore['qualityLabel'] =
+    !validity.isScoreable ? 'impaired' : maxSpv < 2 ? 'excellent' : maxSpv < 4 ? 'good' : 'fair';
+
+  const clinicalGuidance =
+    locale === 'hi'
+      ? `SPV: दायाँ ${rightEye.spvDegPerSec}°/s, बायाँ ${leftEye.spvDegPerSec}°/s। यह जांच दृष्टि दमन को समाप्त नहीं करती — केवल सकारात्मक निष्कर्ष ही उपयोगी है।`
+      : `SPV: right eye ${rightEye.spvDegPerSec} deg/s, left eye ${leftEye.spvDegPerSec} deg/s. Visual fixation was not denied during this recording, so only a positive finding here is informative.`;
+
+  return { rightEye, leftEye, axis: axisHint, eyesResolvedSeparately, validity, qualityLabel, clinicalGuidance };
 }
 
 /* =========================================================== Helper interpolation & fitting utilities */

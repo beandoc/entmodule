@@ -234,6 +234,15 @@ export interface GazeSession {
    * independent clock during offline analysis.
    */
   syncMarkerT?: number;
+  /**
+   * Mode-specific result from the VNG-Clinical Scoring Engine (vng-analytics.ts)
+   * for this test — one of SmoothPursuitVNGScore / VorX1Score / VorX2Score /
+   * SaccadeScore / OknScore / NystagmusVNGScore depending on `exerciseId`.
+   * Loosely typed here (rather than imported) to avoid pulling the scoring
+   * engine's types into this module; a report/history consumer that needs the
+   * concrete shape narrows by `exerciseId` and imports the type itself.
+   */
+  vngScore?: unknown;
 }
 
 /* =========================================================== constants */
@@ -1555,7 +1564,8 @@ export interface PursuitTargetPoint {
   x: number; // normalised 0-1
   y: number; // normalised 0-1
   t: number; // ms
-  mode: 'horizontal' | 'vertical' | 'circular' | 'vor-x2' | 'saccadic' | 'optokinetic';
+  mode: 'horizontal' | 'vertical' | 'circular' | 'vor-x2' | 'saccadic' | 'optokinetic'
+    | 'spontaneous' | 'gaze-left' | 'gaze-right' | 'gaze-up' | 'gaze-down' | 'random-saccade';
 }
 
 export interface PursuitScore {

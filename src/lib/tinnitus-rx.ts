@@ -59,7 +59,6 @@ export const RX_PATTERN = /^RX-(\d{3,5})-(\d{1,2})-(TONE|ACRN|NOTCH|BROAD|BINAUR
 
 /** Abbreviate SOUNDSCAPE to SOUND so the RX code stays under the typeable character limit. */
 const ENGINE_ENCODE: Record<RxEngine, string> = {
-  TONE: 'TONE',
   ACRN: 'ACRN',
   NOTCH: 'NOTCH',
   BROAD: 'BROAD',
@@ -69,7 +68,6 @@ const ENGINE_ENCODE: Record<RxEngine, string> = {
 
 /** Reverse map for decoding abbreviated engine tokens. */
 const TOKEN_TO_ENGINE: Record<string, RxEngine> = {
-  TONE: 'TONE',
   ACRN: 'ACRN',
   NOTCH: 'NOTCH',
   BROAD: 'BROAD',

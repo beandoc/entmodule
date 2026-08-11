@@ -419,7 +419,7 @@ export function extractGazeFromLandmarks(
   // We gate compensation to |head_velocity| < 40°/s to avoid corrupting VOR-x2 exercises
   // where intentional head motion IS the signal.
   if (headPose) {
-    const headVel = Math.hypot(headPose.yawVelocity ?? 0, headPose.pitchVelocity ?? 0);
+    const headVel = Math.hypot((headPose as any).yawVelocity ?? 0, (headPose as any).pitchVelocity ?? 0);
     // Gate compensation when head is stationary/slow (< 40°/s) to avoid corrupting VOR exercises
     if (headVel < 40) {
       const yawRad   = (headPose.yaw * Math.PI) / 180;

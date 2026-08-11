@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { Printer, FileText, CheckCircle2, BarChart3, AlertTriangle } from 'lucide-react';
+import { Printer, FileText, CheckCircle2, Circle, ShieldCheck, BarChart3, Activity, AlertTriangle } from 'lucide-react';
 import { useAppData } from '@/lib/app-data-context';
 import { getCurrentPatientId } from '@/lib/patient-context';
 import { GazeSession, GazePoint } from '@/lib/gaze-tracking';

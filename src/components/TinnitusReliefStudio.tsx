@@ -27,7 +27,6 @@ const OCTAVE_ANCHORS = [250, 500, 1000, 2000, 4000, 6000, 8000, 10000, 12000];
 const SESSION_PRESETS = [15, 30, 60, 120];
 
 const ENGINE_TO_MODE: Record<RxEngine, Exclude<EngineMode, 'idle' | 'pitch'>> = {
-  TONE: 'tone',
   ACRN: 'acrn',
   NOTCH: 'notched',
   BROAD: 'broadband',
@@ -1006,7 +1005,7 @@ export const TinnitusReliefStudio: React.FC = () => {
                 })}
               </div>
 
-              {engineChoice === 'TONE' && (
+              {(engineChoice as string) === 'TONE' && (
                 <div className="rounded-xl bg-slate-50 dark:bg-ink-950 border border-slate-200 dark:border-ink-800 p-4 space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">

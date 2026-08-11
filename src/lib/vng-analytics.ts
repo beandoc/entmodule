@@ -818,9 +818,9 @@ export function scoreSaccades(
     peakVelocities.push(matchingSaccade.peakVelocityDeg);
   }
 
-  const meanLatency = latencies.length > 0 ? median(latencies) : 220;
-  const meanAccuracy = accuracyGains.length > 0 ? median(accuracyGains) : 0.95;
-  const peakVelocity = peakVelocities.length > 0 ? Math.max(...peakVelocities) : 350;
+  const meanLatency = latencies.length > 0 ? median(latencies) : 0;
+  const meanAccuracy = accuracyGains.length > 0 ? median(accuracyGains) : 0;
+  const peakVelocity = peakVelocities.length > 0 ? Math.max(...peakVelocities) : 0;
 
   const dysmetriaClassification: SaccadeScore['dysmetriaClassification'] =
     meanAccuracy < 0.85 ? 'hypometric' :
@@ -897,8 +897,8 @@ export function scoreOKN(
     }
   }
 
-  const spvRight = rightDrifts.length > 0 ? median(rightDrifts) : 10;
-  const spvLeft = leftDrifts.length > 0 ? median(leftDrifts) : 10;
+  const spvRight = rightDrifts.length > 0 ? median(rightDrifts) : 0;
+  const spvLeft = leftDrifts.length > 0 ? median(leftDrifts) : 0;
 
   const denom = spvRight + spvLeft;
   const asymmetryRatioPct = denom > 0 ? (Math.abs(spvRight - spvLeft) / denom) * 100 : 0;

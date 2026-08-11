@@ -21,11 +21,12 @@ export const Calibration5PointModal: React.FC<{
   const [progress, setProgress] = useState(0);
   const samplesRef = useRef<CalibrationPointSample[]>([]);
   const currentAccumulatorRef = useRef<Array<{ x: number; y: number }>>([]);
-  const liveDataRef = useRef(liveData);
+  const onSaveRef = useRef(onSave);
+  const onCloseRef = useRef(onClose);
 
-  useEffect(() => {
-    liveDataRef.current = liveData;
-  }, [liveData]);
+  useEffect(() => { onSaveRef.current = onSave; }, [onSave]);
+  useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
+  useEffect(() => { liveDataRef.current = liveData; }, [liveData]);
 
   const currentPoint = CALIBRATION_POINTS[step];
 
@@ -39,7 +40,7 @@ export const Calibration5PointModal: React.FC<{
         currentAccumulatorRef.current.push({ x: ld.rawOffsetX, y: ld.rawOffsetY });
       }
 
-      setProgress(prev => {
+      setProgress((prev) => {
         const next = prev + 5;
         if (next >= 100) {
           clearInterval(interval);
@@ -48,16 +49,17 @@ export const Calibration5PointModal: React.FC<{
           const meanRawX = accum.length > 0 ? accum.reduce((s, v) => s + v.x, 0) / accum.length : (liveDataRef.current.rawOffsetX ?? 0);
           const meanRawY = accum.length > 0 ? accum.reduce((s, v) => s + v.y, 0) / accum.length : (liveDataRef.current.rawOffsetY ?? 0);
 
+          const targetPt = CALIBRATION_POINTS[step];
           samplesRef.current.push({
-            target: { x: currentPoint.x, y: currentPoint.y },
+            target: { x: targetPt.x, y: targetPt.y },
             rawOffset: { x: meanRawX, y: meanRawY },
           });
 
           if (step < CALIBRATION_POINTS.length - 1) {
-            setStep(s => s + 1);
+            setStep((s) => s + 1);
           } else {
-            onSave(samplesRef.current);
-            onClose();
+            onSaveRef.current(samplesRef.current);
+            onCloseRef.current();
           }
           return 0;
         }
@@ -66,7 +68,7 @@ export const Calibration5PointModal: React.FC<{
     }, 100);
 
     return () => clearInterval(interval);
-  }, [step, currentPoint, onSave, onClose]);
+  }, [step]);
 
   return (
     <div className="fixed inset-0 z-50 bg-black/95 backdrop-blur-2xl flex flex-col justify-between p-6 sm:p-10 select-none">

@@ -101,7 +101,7 @@ export const VNGReportCard: React.FC<VNGReportCardProps> = ({
 
       {/* Signal Quality & Validity Gate Summary */}
       {activeValidity && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 bg-slate-950/60 p-4 rounded-lg border border-slate-800/80 text-xs">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-950/60 p-3.5 rounded-lg border border-slate-800/80 text-xs">
           <div>
             <span className="text-slate-400 block">
               {locale === 'hi' ? 'प्रभावी फ्रेम दर' : 'Effective FPS'}
@@ -174,7 +174,7 @@ export const VNGReportCard: React.FC<VNGReportCardProps> = ({
       {mode === 'smooth_pursuit' && pursuitScore && (
         <div className="space-y-4">
           {/* Main Honest Pursuit Metrics */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
             <MetricCard
               title={locale === 'hi' ? 'परस्यूट क्वालिटी इंडेक्स (PQI)' : 'Pursuit Quality Index (PQI)'}
               value={`${pursuitScore.pursuitQualityIndex ?? 0} / 100`}
@@ -437,10 +437,10 @@ const MetricCard: React.FC<MetricCardProps> = ({ title, value, subtitle, status 
   };
 
   return (
-    <div className={`p-3 bg-slate-950/60 rounded-lg border ${getStatusBorder(status)} flex flex-col justify-between`}>
-      <span className="text-[11px] text-slate-400 block font-medium truncate">{title}</span>
-      <span className="text-xl font-bold font-mono my-1">{value}</span>
-      <span className="text-[10px] text-slate-400 block truncate">{subtitle}</span>
+    <div className={`p-3 bg-slate-950/60 rounded-xl border ${getStatusBorder(status)} flex flex-col justify-between min-w-0 overflow-hidden`}>
+      <span className="text-[11px] text-slate-400 block font-medium truncate" title={title}>{title}</span>
+      <span className="text-lg font-extrabold font-mono my-1 truncate text-slate-100">{value}</span>
+      <span className="text-[10px] text-slate-400 block truncate" title={subtitle}>{subtitle}</span>
     </div>
   );
 };

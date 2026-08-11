@@ -15,7 +15,7 @@
  */
 
 export type NoiseColor = 'white' | 'pink' | 'brown';
-export type SoundscapePreset = 'none' | 'ocean' | 'rain' | 'stream';
+export type SoundscapePreset = 'none' | 'ocean' | 'rain' | 'stream' | 'wind' | 'waterfall' | 'night';
 export type BinauralPreset = 'none' | 'delta' | 'theta' | 'alpha' | 'beta';
 export type EngineMode = 'idle' | 'pitch' | 'tone' | 'acrn' | 'notched' | 'broadband' | 'binaural' | 'soundscape';
 
@@ -32,7 +32,7 @@ export const BINAURAL_PRESETS: Record<Exclude<BinauralPreset, 'none'>, BinauralC
   alpha: {
     name: 'Alpha (10 Hz)',
     nameHi: 'अल्फा (10 Hz)',
-    baseHz: 400,
+    baseHz: 500,
     beatHz: 10.0,
     desc: 'Restful awareness & tinnitus distress reduction',
     descHi: 'शांत एकाग्रता और टिनिटस तनाव में कमी',
@@ -40,7 +40,7 @@ export const BINAURAL_PRESETS: Record<Exclude<BinauralPreset, 'none'>, BinauralC
   theta: {
     name: 'Theta (6 Hz)',
     nameHi: 'थीटा (6 Hz)',
-    baseHz: 350,
+    baseHz: 450,
     beatHz: 6.0,
     desc: 'Deep relaxation & pre-sleep transition',
     descHi: 'गहरी विश्रांति और नींद से पहले की स्थिति',
@@ -48,7 +48,7 @@ export const BINAURAL_PRESETS: Record<Exclude<BinauralPreset, 'none'>, BinauralC
   delta: {
     name: 'Delta (2.5 Hz)',
     nameHi: 'डेल्टा (2.5 Hz)',
-    baseHz: 250,
+    baseHz: 400,
     beatHz: 2.5,
     desc: 'Deep sleep onset & night-time tinnitus relief',
     descHi: 'गहरी नींद और रात के समय टिनिटस से राहत',
@@ -56,7 +56,7 @@ export const BINAURAL_PRESETS: Record<Exclude<BinauralPreset, 'none'>, BinauralC
   beta: {
     name: 'Beta (18 Hz)',
     nameHi: 'बीटा (18 Hz)',
-    baseHz: 400,
+    baseHz: 500,
     beatHz: 18.0,
     desc: 'Active focus & daytime mental clarity',
     descHi: 'सक्रिय ध्यान और दिन के समय मानसिक स्पष्टता',
@@ -111,12 +111,12 @@ export const AUDIO_LIMITS = {
   MAX_FREQUENCY: 14000,
   MIN_LEVEL_DB: -80,
   MAX_LEVEL_DB: 0,
-  DEFAULT_LEVEL_DB: -45,
+  DEFAULT_LEVEL_DB: -15,
   /**
    * Hard linear ceiling on the master bus (~-12 dBFS). Even at slider maximum with the
    * device turned all the way up, output stays below a level that could startle or hurt.
    */
-  MASTER_CEILING: 0.25,
+  MASTER_CEILING: 0.75,
   /** Fade applied to every start and stop, in seconds. */
   FADE_SECONDS: 0.15,
   MAX_SESSION_MINUTES: 180,
@@ -506,6 +506,33 @@ export class TinnitusEngine {
     }, AUDIO_LIMITS.FADE_SECONDS * 1000 + 30);
   }
 
+  setBinauralPreset(preset: BinauralPreset): void {
+    if (this.params.binaural === preset && (this.binauralOscL || preset === 'none')) return;
+    this.params.binaural = preset;
+    if (this.mode !== 'binaural') return;
+
+    this.fadeMaster(0);
+    this.cancelPendingTeardown();
+    this.teardownId = setTimeout(() => {
+      this.teardownId = null;
+      if (this.mode !== 'binaural') return;
+      if (this.binauralOscL) {
+        try { this.binauralOscL.stop(); } catch { /* ignore */ }
+        this.binauralOscL.disconnect();
+        this.binauralOscL = null;
+      }
+      if (this.binauralOscR) {
+        try { this.binauralOscR.stop(); } catch { /* ignore */ }
+        this.binauralOscR.disconnect();
+        this.binauralOscR = null;
+      }
+      if (preset !== 'none') {
+        this.startBinauralBeats(preset);
+      }
+      this.fadeMaster(AUDIO_LIMITS.MASTER_CEILING);
+    }, AUDIO_LIMITS.FADE_SECONDS * 1000 + 30);
+  }
+
   setAcrnOptions(options: Partial<AcrnOptions>): void {
     this.params.acrn = {
       bpm: clamp(options.bpm ?? this.params.acrn.bpm, ACRN_LIMITS.MIN_BPM, ACRN_LIMITS.MAX_BPM),
@@ -579,11 +606,19 @@ export class TinnitusEngine {
   }
 
   private ensureContext(): AudioContext {
-    if (this.ctx) return this.ctx;
+    if (this.ctx) {
+      if (this.ctx.state === 'suspended') {
+        void this.ctx.resume();
+      }
+      return this.ctx;
+    }
 
     const Ctor: typeof AudioContext =
       window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     const ctx = new Ctor();
+    if (ctx.state === 'suspended') {
+      void ctx.resume();
+    }
 
     const engineGain = ctx.createGain();
     engineGain.gain.setValueAtTime(dbToGain(this.params.levelDb), ctx.currentTime);
@@ -677,6 +712,17 @@ export class TinnitusEngine {
         node.connect(filter);
         node = filter;
       }
+      // Notch makeup gain (+6 dB) to offset band energy removal
+      const notchMakeup = ctx.createGain();
+      notchMakeup.gain.setValueAtTime(2.2, ctx.currentTime);
+      node.connect(notchMakeup);
+      node = notchMakeup;
+    } else {
+      // Broadband noise gain boost (+5 dB) to match single pure tone loudness
+      const broadMakeup = ctx.createGain();
+      broadMakeup.gain.setValueAtTime(1.8, ctx.currentTime);
+      node.connect(broadMakeup);
+      node = broadMakeup;
     }
     if (gainFactor < 1.0) {
       const subGain = ctx.createGain();
@@ -813,8 +859,12 @@ export class TinnitusEngine {
     const pannerR = ctx.createStereoPanner();
     pannerR.pan.setValueAtTime(1.0, ctx.currentTime);
 
-    oscL.connect(pannerL).connect(this.engineGain);
-    oscR.connect(pannerR).connect(this.engineGain);
+    const binauralBoost = ctx.createGain();
+    binauralBoost.gain.setValueAtTime(2.2, ctx.currentTime);
+
+    oscL.connect(pannerL).connect(binauralBoost);
+    oscR.connect(pannerR).connect(binauralBoost);
+    binauralBoost.connect(this.engineGain);
 
     oscL.start();
     oscR.start();
@@ -827,7 +877,7 @@ export class TinnitusEngine {
     const ctx = this.ctx;
     if (!ctx || !this.engineGain) return;
 
-    const noiseColor: NoiseColor = preset === 'stream' ? 'brown' : 'pink';
+    const noiseColor: NoiseColor = preset === 'stream' || preset === 'wind' ? 'brown' : preset === 'waterfall' ? 'white' : 'pink';
     let buffer = this.noiseBuffers.get(noiseColor);
     if (!buffer) {
       buffer = createNoiseBuffer(ctx, noiseColor);
@@ -841,55 +891,106 @@ export class TinnitusEngine {
     const filter = ctx.createBiquadFilter();
     const lfo = ctx.createOscillator();
     const lfoGain = ctx.createGain();
+    const soundscapeBoost = ctx.createGain();
+    // Filtered noise loses spectral energy. 12.0 (+21.5 dB) makeup gain matches pure tone loudness.
+    soundscapeBoost.gain.setValueAtTime(12.0, ctx.currentTime);
 
     if (preset === 'ocean') {
-      // Swelling ocean waves: 0.1 Hz LFO (10s cycle) modulating lowpass filter cutoff & volume
+      // Swelling ocean waves: 0.1 Hz LFO (10s cycle) modulating lowpass filter cutoff between 600 Hz and 1800 Hz
       filter.type = 'lowpass';
-      filter.frequency.setValueAtTime(300, ctx.currentTime);
+      filter.frequency.setValueAtTime(1200, ctx.currentTime);
       
       lfo.type = 'sine';
       lfo.frequency.setValueAtTime(0.1, ctx.currentTime); // 10s swell cycle
-      lfoGain.gain.setValueAtTime(350, ctx.currentTime);
+      lfoGain.gain.setValueAtTime(600, ctx.currentTime); // Cutoff modulates 600..1800 Hz
       lfo.connect(lfoGain);
       lfoGain.connect(filter.frequency);
 
       // Synchronized volume swell gain for ocean waves
       const volGain = ctx.createGain();
-      volGain.gain.setValueAtTime(0.6, ctx.currentTime);
+      volGain.gain.setValueAtTime(0.75, ctx.currentTime);
 
       const volLfoGain = ctx.createGain();
-      volLfoGain.gain.setValueAtTime(0.35, ctx.currentTime);
+      volLfoGain.gain.setValueAtTime(0.25, ctx.currentTime);
 
       lfo.connect(volLfoGain);
       volLfoGain.connect(volGain.gain);
 
-      source.connect(filter).connect(volGain).connect(this.engineGain);
+      source.connect(filter).connect(volGain).connect(soundscapeBoost).connect(this.engineGain);
       this.soundscapeVolGain = volGain;
     } else if (preset === 'rain') {
-      // Gentle rain: highpass filter at 900 Hz with 2.2 Hz LFO shimmer
+      // Gentle rain: highpass filter at 800 Hz with 2.2 Hz LFO shimmer
       filter.type = 'highpass';
-      filter.frequency.setValueAtTime(900, ctx.currentTime);
+      filter.frequency.setValueAtTime(800, ctx.currentTime);
       
       lfo.type = 'sine';
       lfo.frequency.setValueAtTime(2.2, ctx.currentTime); // 2.2 Hz shimmer
-      lfoGain.gain.setValueAtTime(300, ctx.currentTime);
+      lfoGain.gain.setValueAtTime(200, ctx.currentTime);
       lfo.connect(lfoGain);
       lfoGain.connect(filter.frequency);
 
-      source.connect(filter).connect(this.engineGain);
-    } else {
-      // Forest stream: resonant bandpass filter around 550 Hz (babbling brook)
+      source.connect(filter).connect(soundscapeBoost).connect(this.engineGain);
+    } else if (preset === 'stream') {
+      // Forest stream: resonant bandpass filter around 750 Hz (babbling brook)
       filter.type = 'bandpass';
-      filter.frequency.setValueAtTime(550, ctx.currentTime);
-      filter.Q.setValueAtTime(2.2, ctx.currentTime);
+      filter.frequency.setValueAtTime(750, ctx.currentTime);
+      filter.Q.setValueAtTime(1.4, ctx.currentTime);
 
       lfo.type = 'sine';
       lfo.frequency.setValueAtTime(0.45, ctx.currentTime); // 2.2s ripple cycle
-      lfoGain.gain.setValueAtTime(300, ctx.currentTime);
+      lfoGain.gain.setValueAtTime(200, ctx.currentTime);
       lfo.connect(lfoGain);
       lfoGain.connect(filter.frequency);
 
-      source.connect(filter).connect(this.engineGain);
+      source.connect(filter).connect(soundscapeBoost).connect(this.engineGain);
+    } else if (preset === 'wind') {
+      // Mountain Wind: slow 0.08 Hz (12.5s) gust swells sweeping lowpass filter cutoff 300..1100 Hz
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(700, ctx.currentTime);
+
+      lfo.type = 'sine';
+      lfo.frequency.setValueAtTime(0.08, ctx.currentTime);
+      lfoGain.gain.setValueAtTime(400, ctx.currentTime);
+      lfo.connect(lfoGain);
+      lfoGain.connect(filter.frequency);
+
+      const volGain = ctx.createGain();
+      volGain.gain.setValueAtTime(0.7, ctx.currentTime);
+
+      const volLfoGain = ctx.createGain();
+      volLfoGain.gain.setValueAtTime(0.3, ctx.currentTime);
+
+      lfo.connect(volLfoGain);
+      volLfoGain.connect(volGain.gain);
+
+      source.connect(filter).connect(volGain).connect(soundscapeBoost).connect(this.engineGain);
+      this.soundscapeVolGain = volGain;
+    } else if (preset === 'waterfall') {
+      // Cascading Waterfall: wideband steady cascade with peaking filter at 1200 Hz
+      filter.type = 'peaking';
+      filter.frequency.setValueAtTime(1200, ctx.currentTime);
+      filter.Q.setValueAtTime(1.0, ctx.currentTime);
+      filter.gain.setValueAtTime(4.0, ctx.currentTime);
+
+      lfo.type = 'sine';
+      lfo.frequency.setValueAtTime(0.2, ctx.currentTime);
+      lfoGain.gain.setValueAtTime(100, ctx.currentTime);
+      lfo.connect(lfoGain);
+      lfoGain.connect(filter.frequency);
+
+      source.connect(filter).connect(soundscapeBoost).connect(this.engineGain);
+    } else {
+      // Summer Night: soft 400 Hz lowpass breeze with high-pitch cricket chirps
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(450, ctx.currentTime);
+
+      lfo.type = 'sine';
+      lfo.frequency.setValueAtTime(0.3, ctx.currentTime);
+      lfoGain.gain.setValueAtTime(100, ctx.currentTime);
+      lfo.connect(lfoGain);
+      lfoGain.connect(filter.frequency);
+
+      source.connect(filter).connect(soundscapeBoost).connect(this.engineGain);
     }
 
     lfo.start();

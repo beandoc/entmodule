@@ -27,6 +27,7 @@ const OCTAVE_ANCHORS = [250, 500, 1000, 2000, 4000, 6000, 8000, 10000, 12000];
 const SESSION_PRESETS = [15, 30, 60, 120];
 
 const ENGINE_TO_MODE: Record<RxEngine, Exclude<EngineMode, 'idle' | 'pitch'>> = {
+  TONE: 'tone',
   ACRN: 'acrn',
   NOTCH: 'notched',
   BROAD: 'broadband',
@@ -205,6 +206,7 @@ export const TinnitusReliefStudio: React.FC = () => {
   useEffect(() => { engineRef.current?.setPan(pan); }, [pan]);
   useEffect(() => { engineRef.current?.setNoiseColor(noiseColor); }, [noiseColor]);
   useEffect(() => { engineRef.current?.setSoundscape(soundscape); }, [soundscape]);
+  useEffect(() => { engineRef.current?.setBinauralPreset(binauralPreset); }, [binauralPreset]);
   useEffect(() => { engineRef.current?.setAcrnOptions({ loopRepeat, restLength }); }, [loopRepeat, restLength]);
 
   // Session countdown — deadline-based so it does not drift over a 60-minute session.
@@ -989,7 +991,17 @@ export const TinnitusReliefStudio: React.FC = () => {
                   return (
                     <button
                       key={option.id}
-                      onClick={() => { stopAll(); setEngineChoice(option.id); }}
+                      onClick={async () => {
+                        const wasPlaying = isTherapyPlaying;
+                        stopAll();
+                        setEngineChoice(option.id);
+                        if (wasPlaying) {
+                          const totalMs = (remainingSeconds > 0 ? remainingSeconds : sessionMinutes * 60) * 1000;
+                          sessionDeadlineRef.current = Date.now() + totalMs;
+                          sessionStartRef.current = Date.now();
+                          await play(ENGINE_TO_MODE[option.id]);
+                        }
+                      }}
                       className={`p-4 rounded-xl border text-left transition-all space-y-1.5 ${
                         active
                           ? 'bg-navy-900 text-white border-navy-900 shadow-md ring-2 ring-navy-900/20'
@@ -1131,11 +1143,14 @@ export const TinnitusReliefStudio: React.FC = () => {
                   <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
                     {hi ? 'प्राकृतिक माहौल' : 'Natural Ambient Soundscape'}
                   </span>
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                     {([
                       { id: 'ocean' as SoundscapePreset, label: hi ? 'समुद्र की लहरें' : 'Ocean Waves', desc: hi ? '10-सेकंड चक्र स्वाइल' : '10s swell cycles' },
                       { id: 'rain' as SoundscapePreset, label: hi ? 'हल्की बारिश' : 'Rainfall', desc: hi ? 'निरंतर हल्की बूंदें' : 'Steady raindrops' },
-                      { id: 'stream' as SoundscapePreset, label: hi ? 'पहाड़ी झरना' : 'Forest Stream', desc: hi ? 'बहते पानी का स्वर' : 'Babbling brook' },
+                      { id: 'stream' as SoundscapePreset, label: hi ? 'पहाड़ी झरना' : 'Forest Stream', desc: hi ? 'कल-कल बहता झरना' : 'Babbling brook' },
+                      { id: 'wind' as SoundscapePreset, label: hi ? 'पहाड़ी हवा' : 'Mountain Wind', desc: hi ? 'शांत हवा का झोंका' : 'Gentle gust swells' },
+                      { id: 'waterfall' as SoundscapePreset, label: hi ? 'सफेद झरना' : 'Cascading Waterfall', desc: hi ? 'झरने की निरंतर आवाज़' : 'Cascading water mask' },
+                      { id: 'night' as SoundscapePreset, label: hi ? 'गर्मियों की रात' : 'Summer Night', desc: hi ? 'शांत हवा व झींगुर' : 'Night breeze & crickets' },
                     ]).map((option) => (
                       <button
                         key={option.id}
@@ -1281,17 +1296,19 @@ export const TinnitusReliefStudio: React.FC = () => {
                   {hi ? 'सत्र टाइमर' : 'Session timer'}
                 </span>
                 <h3 className="font-bold text-sm text-slate-200">
-                  {engineChoice === 'ACRN'
-                    ? 'ACRN'
+                  {engineChoice === 'TONE'
+                    ? (hi ? 'एकल शुद्ध टोन' : 'Pure Tone Masker')
+                    : engineChoice === 'ACRN'
+                    ? 'ACRN 4-tone'
                     : engineChoice === 'NOTCH'
                     ? (hi ? 'नॉच्ड शोर' : 'Notched noise')
                     : engineChoice === 'BROAD'
-                    ? (hi ? 'ब्रॉडबैंड' : 'Broadband')
+                    ? (hi ? 'ब्रॉडबैंड मास्कर' : 'Broadband Masker')
                     : engineChoice === 'BINAURAL'
                     ? (hi ? 'बायनौरल बीट्स' : 'Binaural Beats')
                     : (hi ? 'प्राकृतिक ध्वनियां' : 'Natural Soundscape')}
                   {/* Only show fT for modes where it is clinically relevant */}
-                  {(engineChoice === 'ACRN' || engineChoice === 'NOTCH' || engineChoice === 'BROAD') && ` · ${frequency} Hz`}
+                  {(engineChoice === 'TONE' || engineChoice === 'ACRN' || engineChoice === 'NOTCH' || engineChoice === 'BROAD') && ` · ${frequency} Hz`}
                 </h3>
               </div>
 

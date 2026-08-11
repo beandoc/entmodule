@@ -442,17 +442,21 @@ export function extractGazeFromLandmarks(
   const GAZE_GAIN_X = 1.8 * distScale;
   const GAZE_GAIN_Y = 1.8 * distScale;
 
-  const gazeX = Math.min(Math.max(0.5 + deltaX * GAZE_GAIN_X, 0.02), 0.98);
+  // Negate deltaX: MediaPipe landmarks are in the raw (unmirrored) camera frame.
+  // When the patient looks screen-left, the pupil shifts right in the raw frame,
+  // making deltaX positive. But screen-left = X decreasing, so we negate to align
+  // gaze coordinates with the screen/target coordinate system.
+  const gazeX = Math.min(Math.max(0.5 - deltaX * GAZE_GAIN_X, 0.02), 0.98);
   const gazeY = Math.min(Math.max(0.5 + deltaY * GAZE_GAIN_Y, 0.02), 0.98);
 
-  // Per-eye position tracking derived from monocular iris offsets
+  // Per-eye position tracking derived from monocular iris offsets (negated X for mirroring)
   const lDeltaX = lOffsetX - zeroX;
   const rDeltaX = rOffsetX - zeroX;
   const lDeltaY = lOffsetY - zeroY;
   const rDeltaY = rOffsetY - zeroY;
 
-  const lGazeX = Math.min(Math.max(0.5 + lDeltaX * GAZE_GAIN_X, 0.02), 0.98);
-  const rGazeX = Math.min(Math.max(0.5 + rDeltaX * GAZE_GAIN_X, 0.02), 0.98);
+  const lGazeX = Math.min(Math.max(0.5 - lDeltaX * GAZE_GAIN_X, 0.02), 0.98);
+  const rGazeX = Math.min(Math.max(0.5 - rDeltaX * GAZE_GAIN_X, 0.02), 0.98);
   const lGazeY = Math.min(Math.max(0.5 + lDeltaY * GAZE_GAIN_Y, 0.02), 0.98);
   const rGazeY = Math.min(Math.max(0.5 + rDeltaY * GAZE_GAIN_Y, 0.02), 0.98);
   const eyeDisagreement = Math.hypot(lGazeX - rGazeX, lGazeY - rGazeY);
@@ -649,39 +653,60 @@ export function scoreVOR(
     return { gain: 0, phaseErrorDeg: 0, phaseLagMs: 0, cycles: 0, meanHeadVelocityDeg: 0, meanGazeVelocityDeg: 0, label: 'fair' };
   }
 
-  // Compute head velocity series (°/s)
+  // Compute head velocity series (°/s) — signed for direction check
   const headVelocities: number[] = [];
+  const headVelocitiesAbs: number[] = [];
   for (let i = 1; i < headSeries.length; i++) {
     const gapMs = headSeries[i].t - headSeries[i - 1].t;
     if (gapMs <= 0 || gapMs > MAX_SAMPLE_GAP_MS) continue;
-    headVelocities.push(Math.abs(headSeries[i].yaw - headSeries[i - 1].yaw) / (gapMs / 1000));
+    const v = (headSeries[i].yaw - headSeries[i - 1].yaw) / (gapMs / 1000);
+    headVelocities.push(v);
+    headVelocitiesAbs.push(Math.abs(v));
   }
 
-  // Compute gaze velocity series (normalised → °/s)
+  // Compute gaze velocity series (normalised → °/s) — signed horizontal only
   const gazeVelocities: number[] = [];
+  const gazeVelocitiesAbs: number[] = [];
   for (let i = 1; i < gazeSeries.length; i++) {
     const gapMs = gazeSeries[i].t - gazeSeries[i - 1].t;
     if (gapMs <= 0 || gapMs > MAX_SAMPLE_GAP_MS) continue;
     const dt = gapMs / 1000;
     const dx = gazeSeries[i].x - gazeSeries[i - 1].x;
     const dy = gazeSeries[i].y - gazeSeries[i - 1].y;
-    gazeVelocities.push((Math.sqrt(dx * dx + dy * dy) / dt) * DEG_PER_UNIT);
+    const vSigned = (dx / dt) * DEG_PER_UNIT;
+    gazeVelocities.push(vSigned);
+    gazeVelocitiesAbs.push((Math.sqrt(dx * dx + dy * dy) / dt) * DEG_PER_UNIT);
   }
 
-  if (headVelocities.length === 0 || gazeVelocities.length === 0) {
+  if (headVelocitiesAbs.length === 0 || gazeVelocitiesAbs.length === 0) {
     return { gain: 0, phaseErrorDeg: 0, phaseLagMs: 0, cycles: 0, meanHeadVelocityDeg: 0, meanGazeVelocityDeg: 0, label: 'fair' };
   }
 
-  const meanHeadV = headVelocities.reduce((s, v) => s + v, 0) / headVelocities.length;
-  const meanGazeV = gazeVelocities.reduce((s, v) => s + v, 0) / gazeVelocities.length;
+  const meanHeadV = headVelocitiesAbs.reduce((s, v) => s + v, 0) / headVelocitiesAbs.length;
+  const meanGazeV = gazeVelocitiesAbs.reduce((s, v) => s + v, 0) / gazeVelocitiesAbs.length;
 
   const isHeadStationary = meanHeadV < 15.0; // Head velocity < 15°/s is stationary / pursuit
 
-  // VOR Gain = Gaze Velocity / Head Velocity (requires active head rotation >= 15°/s)
-  const gain = isHeadStationary ? 0 : Math.min(meanGazeV / meanHeadV, 1.5);
+  // Direction check: VOR should produce eye motion OPPOSING head. Compute
+  // Pearson r between signed head and gaze horizontal velocities. A healthy
+  // VOR has r ≈ -1 (anti-correlated). If r > -0.15 (uncorrelated or same-
+  // direction) the eye is not opposing the head, so report gain = 0 regardless
+  // of magnitude match.
+  let directionValid = true;
+  if (!isHeadStationary) {
+    const minLen = Math.min(headVelocities.length, gazeVelocities.length);
+    if (minLen >= 4) {
+      const r = pearson(headVelocities.slice(0, minLen), gazeVelocities.slice(0, minLen));
+      directionValid = r < -0.15;
+    }
+  }
+
+  // VOR Gain = Gaze Velocity / Head Velocity (requires active head rotation >= 15°/s AND opposing direction)
+  const gain = (isHeadStationary || !directionValid) ? 0 : Math.min(meanGazeV / meanHeadV, 1.5);
 
   const label: VORScore['label'] =
     isHeadStationary ? 'good' :
+    !directionValid ? 'impaired' :
     gain >= 0.9 ? 'excellent' :
     gain >= 0.7 ? 'good' :
     gain >= 0.5 ? 'fair' : 'impaired';

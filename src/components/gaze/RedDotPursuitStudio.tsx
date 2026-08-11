@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Play, Square, RotateCcw, Camera, Info, Volume2, VolumeX,
-  Mic, MicOff, Maximize2, Minimize2, Clock, Sparkles, Activity, Target, Brain
+  Mic, MicOff, Maximize2, Minimize2, Clock, Sparkles, Activity, Target, Brain, Zap
 } from 'lucide-react';
 import {
   CameraState, LiveData, PursuitPattern, EyeTracingPoint, targetPositionAt, HUD_SYNC_INTERVAL_MS,
@@ -54,6 +54,8 @@ export const RedDotPursuitTab: React.FC<{
   const eyeTracingGraphRef = useRef<HTMLDivElement | null>(null);
 
   const [pattern, setPattern] = useState<PursuitPattern>('horizontal');
+  const [protocolMode, setProtocolMode] = useState<'quick' | 'full'>('full');
+  const [activeCategory, setActiveCategory] = useState<'oculomotor' | 'vor' | 'gaze'>('oculomotor');
   const [isPreparingTest, setIsPreparingTest] = useState(false);
   const [speedHz, setSpeedHz] = useState<number>(0.4);
   const [isTesting, setIsTesting] = useState(false);
@@ -881,40 +883,174 @@ export const RedDotPursuitTab: React.FC<{
         </div>
       )}
 
-      {/* Pattern Selector Bar */}
-      <div className="bg-[#0b0f19] p-3 sm:p-4 rounded-2xl border border-white/10 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 shadow-xl">
-        <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0 scrollbar-none sm:flex-wrap">
-          {(
-            [
-              { id: 'horizontal', label: hi ? '↔ क्षैतिज स्मूथ परस्यूट' : '↔ Smooth Pursuit (Horizontal)' },
-              { id: 'vertical', label: hi ? '↕ लंबवत स्मूथ परस्यूट' : '↕ Smooth Pursuit (Vertical)' },
-              { id: 'saccadic', label: hi ? '⚡ सैकेडिक स्टेप टेस्ट' : '⚡ Saccadic Step Test' },
-              { id: 'random-saccade', label: hi ? '🎲 रैंडम सैकेड टेस्ट' : '🎲 Random Saccade Test' },
-              { id: 'optokinetic', label: hi ? '🌀 ऑप्टोकाइनेटिक OKN (20°/s)' : '🌀 Optokinetic OKN (20°/s)' },
-              { id: 'vor-x2', label: hi ? '🔀 VOR x2' : '🔀 VOR x2' },
-              { id: 'spontaneous', label: hi ? '👁 स्वतःस्फूर्त निस्टागमस' : '👁 Spontaneous Nystagmus' },
-              { id: 'gaze-left', label: hi ? '← गेज़-प्रेरित (बाएं)' : '← Gaze-Induced (Left)' },
-              { id: 'gaze-right', label: hi ? '→ गेज़-प्रेरित (दाएं)' : '→ Gaze-Induced (Right)' },
-              { id: 'gaze-up', label: hi ? '↑ गेज़-प्रेरित (ऊपर)' : '↑ Gaze-Induced (Up)' },
-              { id: 'gaze-down', label: hi ? '↓ गेज़-प्रेरित (नीचे)' : '↓ Gaze-Induced (Down)' },
-            ] as const
-          ).map((p) => (
+      {/* Protocol Mode Switcher Bar */}
+      <div className="bg-[#0b0f19] p-3 sm:p-4 rounded-2xl border border-white/10 space-y-3 shadow-xl">
+        <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-white/10">
+          <div className="flex items-center gap-2">
             <button
-              key={p.id}
               onClick={() => {
-                if (isTesting) stopTest();
-                setPattern(p.id);
+                setProtocolMode('quick');
+                setPattern('horizontal');
               }}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                pattern === p.id
-                  ? 'bg-rose-600 text-white shadow-lg shadow-rose-600/30 ring-2 ring-rose-400'
-                  : 'bg-white/5 text-slate-400 hover:bg-white/10 hover:text-white'
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-all ${
+                protocolMode === 'quick'
+                  ? 'bg-amber-500 text-slate-950 shadow-lg shadow-amber-500/30 ring-2 ring-amber-400'
+                  : 'bg-white/5 text-slate-300 hover:bg-white/10'
               }`}
             >
-              {p.label}
+              <Zap className="w-3.5 h-3.5 fill-current" />
+              {hi ? '⚡ क्विक 3-मिनट स्क्रीन' : '⚡ Quick 3-Min Screen'}
             </button>
-          ))}
+
+            <button
+              onClick={() => setProtocolMode('full')}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-all ${
+                protocolMode === 'full'
+                  ? 'bg-rose-600 text-white shadow-lg shadow-rose-600/30 ring-2 ring-rose-400'
+                  : 'bg-white/5 text-slate-300 hover:bg-white/10'
+              }`}
+            >
+              <Target className="w-3.5 h-3.5" />
+              {hi ? '🧾 संपूर्ण VNG बैटरी (11 टेस्ट)' : '🧾 Full VNG Battery (11 Tests)'}
+            </button>
+          </div>
+
+          {protocolMode === 'quick' && (
+            <span className="text-[11px] font-semibold text-amber-300 bg-amber-500/10 px-3 py-1 rounded-full border border-amber-500/20">
+              {hi ? 'त्वरित स्क्रीन: स्मूथ परस्यूट → सैकेड्स → VOR x2' : 'Quick Screen: Smooth Pursuit → Saccades → VOR x2'}
+            </span>
+          )}
         </div>
+
+        {/* Full Battery Category Tabs */}
+        {protocolMode === 'full' && (
+          <div className="space-y-2.5">
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
+              {(
+                [
+                  { id: 'oculomotor', label: hi ? '👁 ओक्यूलोमोटर (5)' : '👁 Oculomotor (5)' },
+                  { id: 'vor', label: hi ? '🔀 VOR एवं स्थिरीकरण (2)' : '🔀 VOR & Fixation (2)' },
+                  { id: 'gaze', label: hi ? '←→ गेज़-प्रेरित निस्टागमस (4)' : '←→ Gaze-Evoked Nystagmus (4)' },
+                ] as const
+              ).map((cat) => (
+                <button
+                  key={cat.id}
+                  onClick={() => setActiveCategory(cat.id)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                    activeCategory === cat.id
+                      ? 'bg-white/15 text-white border border-white/20 shadow'
+                      : 'bg-white/5 text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  {cat.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Sub-test buttons for selected category */}
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              {activeCategory === 'oculomotor' && (
+                <>
+                  {[
+                    { id: 'horizontal', label: hi ? '↔ क्षैतिज स्मूथ परस्यूट' : '↔ Smooth Pursuit (Horizontal)' },
+                    { id: 'vertical', label: hi ? '↕ लंबवत स्मूथ परस्यूट' : '↕ Smooth Pursuit (Vertical)' },
+                    { id: 'saccadic', label: hi ? '⚡ सैकेडिक स्टेप टेस्ट' : '⚡ Saccadic Step Test' },
+                    { id: 'random-saccade', label: hi ? '🎲 रैंडम सैकेड टेस्ट' : '🎲 Random Saccade Test' },
+                    { id: 'optokinetic', label: hi ? '🌀 ऑप्टोकाइनेटिक OKN (20°/s)' : '🌀 Optokinetic OKN (20°/s)' },
+                  ].map((p) => (
+                    <button
+                      key={p.id}
+                      onClick={() => {
+                        if (isTesting) stopTest();
+                        setPattern(p.id as PursuitPattern);
+                      }}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                        pattern === p.id
+                          ? 'bg-rose-600 text-white shadow-md ring-2 ring-rose-400'
+                          : 'bg-white/5 text-slate-300 hover:bg-white/10'
+                      }`}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </>
+              )}
+
+              {activeCategory === 'vor' && (
+                <>
+                  {[
+                    { id: 'vor-x2', label: hi ? '🔀 VOR x2 टेस्ट' : '🔀 VOR x2 Test' },
+                    { id: 'spontaneous', label: hi ? '👁 स्वतःस्फूर्त निस्टागमस' : '👁 Spontaneous Nystagmus' },
+                  ].map((p) => (
+                    <button
+                      key={p.id}
+                      onClick={() => {
+                        if (isTesting) stopTest();
+                        setPattern(p.id as PursuitPattern);
+                      }}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                        pattern === p.id
+                          ? 'bg-rose-600 text-white shadow-md ring-2 ring-rose-400'
+                          : 'bg-white/5 text-slate-300 hover:bg-white/10'
+                      }`}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </>
+              )}
+
+              {activeCategory === 'gaze' && (
+                <>
+                  {[
+                    { id: 'gaze-left', label: hi ? '← गेज़-प्रेरित (बाएं)' : '← Gaze-Induced (Left)' },
+                    { id: 'gaze-right', label: hi ? '→ गेज़-प्रेरित (दाएं)' : '→ Gaze-Induced (Right)' },
+                    { id: 'gaze-up', label: hi ? '↑ गेज़-प्रेरित (ऊपर)' : '↑ Gaze-Induced (Up)' },
+                    { id: 'gaze-down', label: hi ? '↓ गेज़-प्रेरित (नीचे)' : '↓ Gaze-Induced (Right)' },
+                  ].map((p) => (
+                    <button
+                      key={p.id}
+                      onClick={() => {
+                        if (isTesting) stopTest();
+                        setPattern(p.id as PursuitPattern);
+                      }}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                        pattern === p.id
+                          ? 'bg-rose-600 text-white shadow-md ring-2 ring-rose-400'
+                          : 'bg-white/5 text-slate-300 hover:bg-white/10'
+                      }`}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Quick Screen Preset Selector */}
+        {protocolMode === 'quick' && (
+          <div className="flex flex-wrap items-center gap-2">
+            {[
+              { id: 'horizontal', label: hi ? '1. क्षैतिज परस्यूट (60s)' : '1. Horizontal Pursuit (60s)' },
+              { id: 'random-saccade', label: hi ? '2. रैंडम सैकेड्स (60s)' : '2. Random Saccades (60s)' },
+              { id: 'vor-x2', label: hi ? '3. VOR x2 (60s)' : '3. VOR x2 (60s)' },
+            ].map((step, idx) => (
+              <button
+                key={step.id}
+                onClick={() => setPattern(step.id as PursuitPattern)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all border ${
+                  pattern === step.id
+                    ? 'bg-amber-500 text-slate-950 border-amber-400 font-extrabold'
+                    : 'bg-white/5 text-slate-300 border-white/10 hover:bg-white/10'
+                }`}
+              >
+                {step.label}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* Action Controls & Voice Command Buttons */}
         <div className="flex items-center gap-2">

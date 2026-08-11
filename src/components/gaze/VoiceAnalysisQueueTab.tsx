@@ -38,50 +38,65 @@ export const VoiceAnalysisQueueTab: React.FC<VoiceAnalysisQueueTabProps> = ({
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccessId, setSaveSuccessId] = useState<string | null>(null);
 
+  // Illustrative rows shown only when the queue is otherwise empty, so the
+  // layout is not blank on first load. `isDemoSeed` and `computedBy: 'demo-seed'`
+  // mark every number here as invented for display, not measured - the render
+  // below refuses to show DSP metrics as real unless computedBy is 'device-dsp-v1'.
+  const buildDemoSeed = (): VoiceAnalysisSubmission[] => [
+    {
+      id: 'vsub-seed-101',
+      patientId: 'pt_101',
+      patientName: 'Sachin Srivastava',
+      patientMrn: 'MRN: 88491',
+      audioDataUrl: '',
+      durationSec: 8,
+      recordingType: 'phonation_aaa',
+      patientNote: 'Felt vocal fatigue and mild roughness after 30 minutes of continuous talking.',
+      isDemoSeed: true,
+      autoDspMetrics: {
+        cppsDb: 13.8, cppsVoicedRatio: 0.82, mptSec: null, phonationDropouts: null,
+        noiseFloorDb: -44, clippedFraction: 0, durationSec: 8, sampleRate: 48000,
+        deviceFingerprint: 'demo', processingDisabled: true, qualityFlags: [], computedBy: 'demo-seed',
+      },
+      status: 'pending',
+      createdAt: new Date(Date.now() - 3600000 * 2).toISOString(),
+      createdTimestampMs: Date.now() - 3600000 * 2,
+    },
+    {
+      id: 'vsub-seed-102',
+      patientId: 'pt_102',
+      patientName: 'Anita Sharma',
+      patientMrn: 'MRN: 94102',
+      audioDataUrl: '',
+      durationSec: 12,
+      recordingType: 'mpt',
+      patientNote: 'Post-operative 4 weeks cordectomy follow-up voice sample.',
+      isDemoSeed: true,
+      autoDspMetrics: {
+        cppsDb: null, cppsVoicedRatio: null, mptSec: 12.0, phonationDropouts: 1,
+        noiseFloorDb: -48, clippedFraction: 0, durationSec: 12, sampleRate: 48000,
+        deviceFingerprint: 'demo', processingDisabled: true, qualityFlags: [], computedBy: 'demo-seed',
+      },
+      status: 'reviewed',
+      createdAt: new Date(Date.now() - 3600000 * 24).toISOString(),
+      createdTimestampMs: Date.now() - 3600000 * 24,
+      expertReview: {
+        reviewedAt: new Date(Date.now() - 3600000 * 18).toISOString(),
+        reviewedTimestampMs: Date.now() - 3600000 * 18,
+        audiologistName: 'Mr Lokanath Sahoo',
+        audiologistRole: 'Chief Clinical Audiologist',
+        impression: 'mild_dysphonia',
+        comments: 'Good glottic closure recovery observed. MPT steady at 12.0s.',
+        recommendations: ['Maintain hydration', 'Follow-up in 4 weeks'],
+      },
+    },
+  ];
+
   const refreshQueue = () => {
     const list = loadLocalVoiceSubmissions();
-    // If no submissions exist, populate dummy initial patient submissions for demo / audit testing
+    // If no submissions exist, populate illustrative rows for layout purposes only.
     if (list.length === 0) {
-      const initialSeed: VoiceAnalysisSubmission[] = [
-        {
-          id: 'vsub-seed-101',
-          patientId: 'pt_101',
-          patientName: 'Sachin Srivastava',
-          patientMrn: 'MRN: 88491',
-          audioDataUrl: '',
-          durationSec: 8,
-          recordingType: 'phonation_aaa',
-          patientNote: 'Felt vocal fatigue and mild roughness after 30 minutes of continuous talking.',
-          autoDspMetrics: { cppsDb: 13.8, mptSec: 8.2, pitchHz: 142, noiseFloorDb: -44 },
-          status: 'pending',
-          createdAt: new Date(Date.now() - 3600000 * 2).toISOString(),
-          createdTimestampMs: Date.now() - 3600000 * 2,
-        },
-        {
-          id: 'vsub-seed-102',
-          patientId: 'pt_102',
-          patientName: 'Anita Sharma',
-          patientMrn: 'MRN: 94102',
-          audioDataUrl: '',
-          durationSec: 12,
-          recordingType: 'mpt',
-          patientNote: 'Post-operative 4 weeks cordectomy follow-up voice sample.',
-          autoDspMetrics: { cppsDb: 16.2, mptSec: 12.0, pitchHz: 210, noiseFloorDb: -48 },
-          status: 'reviewed',
-          createdAt: new Date(Date.now() - 3600000 * 24).toISOString(),
-          createdTimestampMs: Date.now() - 3600000 * 24,
-          expertReview: {
-            reviewedAt: new Date(Date.now() - 3600000 * 18).toISOString(),
-            reviewedTimestampMs: Date.now() - 3600000 * 18,
-            audiologistName: 'Mr Lokanath Sahoo',
-            audiologistRole: 'Chief Clinical Audiologist',
-            impression: 'mild_dysphonia',
-            comments: 'Good glottic closure recovery observed. CPPS steady at 16.2 dB with stable pitch control.',
-            recommendations: ['Maintain hydration', 'Follow-up in 4 weeks'],
-          },
-        },
-      ];
-      list.push(...initialSeed);
+      list.push(...buildDemoSeed());
       if (typeof window !== 'undefined') {
         window.localStorage.setItem('id-voice-analysis-submissions', JSON.stringify(list));
       }
@@ -316,26 +331,50 @@ export const VoiceAnalysisQueueTab: React.FC<VoiceAnalysisQueueTabProps> = ({
                     )}
                   </div>
 
-                  {/* Auto DSP Prelim Metrics */}
+                  {/* Auto DSP Metrics - only ever what was actually measured.
+                      No field here is ever defaulted; a dash means "not computed",
+                      not "assume normal". */}
                   {sub.autoDspMetrics && (
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs">
-                      <div className="bg-white/5 p-2.5 rounded-xl border border-white/5">
-                        <span className="text-[10px] text-slate-400 block font-medium">CPPS Measure</span>
-                        <span className="font-mono font-bold text-teal-300 text-sm">{sub.autoDspMetrics.cppsDb ?? 14.5} dB</span>
+                    <div className="space-y-1.5">
+                      {sub.isDemoSeed && (
+                        <div className="text-[10px] font-bold text-amber-300/90 bg-amber-950/30 border border-amber-500/30 rounded-lg px-2 py-1 inline-block">
+                          {hi ? '⚠ नमुना डेटा — किसी वास्तविक रिकॉर्डिंग से नहीं' : '⚠ DEMO DATA - not from a real recording'}
+                        </div>
+                      )}
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs">
+                        <div className="bg-white/5 p-2.5 rounded-xl border border-white/5">
+                          <span className="text-[10px] text-slate-400 block font-medium">CPPS</span>
+                          <span className="font-mono font-bold text-teal-300 text-sm">
+                            {sub.autoDspMetrics.cppsDb !== null ? `${sub.autoDspMetrics.cppsDb.toFixed(1)} dB` : '—'}
+                          </span>
+                        </div>
+                        <div className="bg-white/5 p-2.5 rounded-xl border border-white/5">
+                          <span className="text-[10px] text-slate-400 block font-medium">MPT</span>
+                          <span className="font-mono font-bold text-teal-300 text-sm">
+                            {sub.autoDspMetrics.mptSec !== null ? `${sub.autoDspMetrics.mptSec.toFixed(1)} s` : '—'}
+                          </span>
+                        </div>
+                        <div className="bg-white/5 p-2.5 rounded-xl border border-white/5">
+                          <span className="text-[10px] text-slate-400 block font-medium">Noise Floor</span>
+                          <span className="font-mono font-bold text-slate-300 text-sm">{sub.autoDspMetrics.noiseFloorDb.toFixed(0)} dB</span>
+                        </div>
+                        <div className="bg-white/5 p-2.5 rounded-xl border border-white/5">
+                          <span className="text-[10px] text-slate-400 block font-medium">Duration</span>
+                          <span className="font-mono font-bold text-slate-300 text-sm">{sub.autoDspMetrics.durationSec.toFixed(1)} s</span>
+                        </div>
                       </div>
-                      <div className="bg-white/5 p-2.5 rounded-xl border border-white/5">
-                        <span className="text-[10px] text-slate-400 block font-medium">MPT Duration</span>
-                        <span className="font-mono font-bold text-teal-300 text-sm">{sub.autoDspMetrics.mptSec ?? sub.durationSec} s</span>
-                      </div>
-                      <div className="bg-white/5 p-2.5 rounded-xl border border-white/5">
-                        <span className="text-[10px] text-slate-400 block font-medium">Est F0 Pitch</span>
-                        <span className="font-mono font-bold text-teal-300 text-sm">{sub.autoDspMetrics.pitchHz ?? 145} Hz</span>
-                      </div>
-                      <div className="bg-white/5 p-2.5 rounded-xl border border-white/5">
-                        <span className="text-[10px] text-slate-400 block font-medium">Noise Floor</span>
-                        <span className="font-mono font-bold text-slate-300 text-sm">{sub.autoDspMetrics.noiseFloorDb ?? -44} dB</span>
-                      </div>
+                      {sub.autoDspMetrics.qualityFlags.length > 0 && (
+                        <p className="text-[10px] text-amber-300/90">
+                          {hi ? 'गुणवत्ता ध्वज: ' : 'Quality flags: '}
+                          {sub.autoDspMetrics.qualityFlags.join(', ')}
+                        </p>
+                      )}
                     </div>
+                  )}
+                  {!sub.autoDspMetrics && (
+                    <p className="text-[11px] text-slate-500 italic">
+                      {hi ? 'इस नमुने के लिए कोई स्वचालित माप उपलब्ध नहीं।' : 'No automated measurements available for this sample.'}
+                    </p>
                   )}
 
                   {/* Patient Note & Complaints */}

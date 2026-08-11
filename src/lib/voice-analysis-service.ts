@@ -10,6 +10,61 @@
 import { db } from './firebase';
 import { collection, addDoc, doc, updateDoc, getDocs, query, where, serverTimestamp } from 'firebase/firestore';
 
+/**
+ * Recording-quality problems that make a take unsafe to score. These are the
+ * reviewer's cue that a number is missing for a reason, and they gate submission
+ * in VoiceAnalysisRecorder rather than travelling with a bad take.
+ */
+export type VoiceQualityFlag =
+  | 'room_too_noisy'
+  | 'clipped'
+  | 'too_short'
+  | 'no_phonation_detected'
+  | 'low_voiced_ratio'
+  | 'mic_processing_active';
+
+/**
+ * On-device acoustic measurements from voice-dsp.ts.
+ *
+ * Every field here is measured. Nothing is defaulted, estimated or filled in -
+ * an earlier version of this file carried a randomised CPPS and a hardcoded
+ * pitch, which reached the audiologist's review panel labelled as acoustic
+ * analysis. Do not reintroduce placeholder values for any clinical number.
+ *
+ * Portability warning inherited from voice-dsp.ts: absolute CPPS is not
+ * comparable across microphones or mouth-to-mic distances. `deviceFingerprint`
+ * exists so a reviewer can tell whether two sessions are comparable at all.
+ */
+export interface AutoDspMetrics {
+  /** Smoothed cepstral peak prominence, dB. Null unless the task was a sustained vowel. */
+  cppsDb: number | null;
+  /** Fraction of frames passing the voicing gate. Low values mean a poor take. */
+  cppsVoicedRatio: number | null;
+  /** Longest sustained phonation, seconds. Null unless the task was MPT. */
+  mptSec: number | null;
+  /** Bridged gaps inside the phonation. Rising counts suggest glottal insufficiency. */
+  phonationDropouts: number | null;
+  /** Measured room floor, dBFS. Not a constant - this is why a take can be rejected. */
+  noiseFloorDb: number;
+  /** Fraction of samples at full scale. Clipping invalidates CPPS. */
+  clippedFraction: number;
+  /** Actual PCM duration, seconds. Distinct from the UI timer. */
+  durationSec: number;
+  sampleRate: number;
+  /** Longitudinal comparison is only valid within one fingerprint. */
+  deviceFingerprint: string;
+  /** False means the browser may have applied gain control under us - see voice-capture.ts. */
+  processingDisabled: boolean;
+  qualityFlags: VoiceQualityFlag[];
+  /**
+   * Provenance. 'device-dsp-v1' means a real recording was measured in-browser.
+   * 'demo-seed' marks the illustrative rows the queue seeds when empty -
+   * these numbers were typed by a developer for layout purposes and must never
+   * be mistaken for a measurement. Keep them visually and structurally distinct.
+   */
+  computedBy: 'device-dsp-v1' | 'demo-seed';
+}
+
 export interface ExpertReview {
   /** ISO timestamp of when the audiologist completed the review */
   reviewedAt: string;
@@ -42,15 +97,18 @@ export interface VoiceAnalysisSubmission {
   patientNote: string;
   /** Optional flagged symptoms */
   symptoms?: string[];
-  /** Automated DSP preliminary metrics */
-  autoDspMetrics?: {
-    cppsDb?: number | null;
-    mptSec?: number | null;
-    pitchHz?: number | null;
-    noiseFloorDb?: number | null;
-  };
+  /**
+   * Measurements computed on-device by voice-dsp.ts. Absent when analysis did not
+   * run; never synthesised. A null field means "this task does not support that
+   * measure" or "the take was too poor to score it" - not "assume a normal value".
+   * The reviewing clinician must be able to tell those apart, so the UI renders
+   * absent and null distinctly and never substitutes a default.
+   */
+  autoDspMetrics?: AutoDspMetrics;
   /** Status of audiologist review */
   status: 'pending' | 'reviewed';
+  /** True only for the illustrative rows the queue seeds when empty. Never set this for a real submission. */
+  isDemoSeed?: boolean;
   /** ISO timestamp of submission */
   createdAt: string;
   /** Epoch ms timestamp */
@@ -133,11 +191,14 @@ export async function submitVoiceSampleForAnalysis(
 /**
  * Save an audiologist's expert analysis and comments for a patient's voice submission.
  * Saves locally and updates the backend document with timestamps.
+ *
+ * Throws if the submission does not exist locally - see the comment at the
+ * lookup below for why this is not recoverable here.
  */
 export async function saveExpertReview(
   submissionId: string,
   reviewInput: Omit<ExpertReview, 'reviewedAt' | 'reviewedTimestampMs'>
-): Promise<VoiceAnalysisSubmission | null> {
+): Promise<VoiceAnalysisSubmission> {
   const now = new Date();
   const fullReview: ExpertReview = {
     ...reviewInput,
@@ -148,23 +209,14 @@ export async function saveExpertReview(
   const current = loadLocalVoiceSubmissions();
   const idx = current.findIndex((s) => s.id === submissionId);
   if (idx === -1) {
-    // Create synthetic entry if submission was not in local memory
-    const synthetic: VoiceAnalysisSubmission = {
-      id: submissionId,
-      patientId: 'pt_101',
-      patientName: 'Sachin Srivastava',
-      patientMrn: 'MRN: 88491',
-      audioDataUrl: '',
-      durationSec: 5,
-      recordingType: 'phonation_aaa',
-      patientNote: 'Voice sample submitted for expert evaluation.',
-      status: 'reviewed',
-      createdAt: new Date().toISOString(),
-      createdTimestampMs: Date.now(),
-      expertReview: fullReview,
-    };
-    saveLocalVoiceSubmission(synthetic);
-    return synthetic;
+    // Refuse rather than invent. This previously fabricated a submission with a
+    // hardcoded patient name and MRN, which would attach a real clinician's
+    // signed review to a record for a patient who never made it. A missing
+    // submission is a sync failure to surface, not a gap to paper over.
+    throw new Error(
+      `Cannot save review: voice submission ${submissionId} was not found. ` +
+        'Reload the queue and try again - do not re-enter the review against a different sample.',
+    );
   }
 
   const updated: VoiceAnalysisSubmission = {

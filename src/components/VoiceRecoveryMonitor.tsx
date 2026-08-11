@@ -11,13 +11,14 @@ import {
   openMicrophone, micErrorKey, describeDevice, recordFor, recordForWithStop, encodeWav,
   type MicHandle, type MicErrorKey,
 } from '@/lib/voice-capture';
-import { submitVoiceSampleForAnalysis } from '@/lib/voice-analysis-service';
+import { submitVoiceSampleForAnalysis, type VoiceQualityFlag } from '@/lib/voice-analysis-service';
+import { getCurrentPatientId } from '@/lib/patient-context';
 import {
   estimateNoiseFloorDb, computeCPPS, detectPhonation, countDdkSyllables, clippedFraction,
   type CppsResult, type PhonationResult, type DdkResult,
 } from '@/lib/voice-dsp';
 import {
-  VOICE_PROTOCOL, COHORTS, SYMPTOM_ITEMS, MAX_USABLE_NOISE_FLOOR_DB,
+  VOICE_PROTOCOL, COHORTS, SYMPTOM_ITEMS, MAX_USABLE_NOISE_FLOOR_DB, MIN_PASSAGE_DURATION_SEC,
   buildVoiceSession, evaluateRedFlags, summariseVoiceTrend, generateVoiceInsight,
   loadVoiceSessions, saveVoiceSession, loadVoiceProfile, saveVoiceProfile,
   MIN_SESSIONS_FOR_ACOUSTIC,
@@ -140,6 +141,7 @@ export const VoiceRecoveryMonitor: React.FC = () => {
       const pcm = await recordForWithStop(mic, seconds, () => stopRequestedRef.current);
       const sr = mic.sampleRate;
       const store = resultsRef.current;
+      const device = describeDevice(mic);
 
       if (task.id === 'calibration') {
         setNoiseFloor(estimateNoiseFloorDb(pcm, sr));
@@ -151,26 +153,49 @@ export const VoiceRecoveryMonitor: React.FC = () => {
         else if (task.id === 'ddk_amr') store.amr = countDdkSyllables(pcm, sr, floor);
         else if (task.id === 'ddk_smr') store.smr = countDdkSyllables(pcm, sr, floor);
 
-        // Auto-save WAV voice sample to backend for audiologist portal hearing
+        // Auto-save WAV voice sample to backend for audiologist portal hearing.
+        // Metrics attached here must be the same measurements buildVoiceSession
+        // uses below, scoped to what this task actually produced - not the
+        // recording's raw duration relabelled as MPT, and never a fixed pitch
+        // that was never computed at all.
         if (pcm && pcm.length > 100) {
           try {
             const wavBlob = encodeWav(pcm, sr);
             const reader = new FileReader();
+            const latestMpt = store.mptTrials.length > 0 ? store.mptTrials[store.mptTrials.length - 1] : null;
+            const takeDurationSec = pcm.length / sr;
+            const recordingType =
+              task.id === 'mpt' ? 'mpt' : task.id === 'cpps_phonation' ? 'phonation_aaa'
+                : task.id === 'passage' ? 'passage' : 'custom_voice_note';
+            const qualityFlags: VoiceQualityFlag[] = [];
+            if (floor > MAX_USABLE_NOISE_FLOOR_DB) qualityFlags.push('room_too_noisy');
+            // AVQI-style scoring of the passage is not wired up yet (Phase 3) - this
+            // flag is what will gate it once it is, so a short take is caught now
+            // rather than silently scored later.
+            if (task.id === 'passage' && takeDurationSec < MIN_PASSAGE_DURATION_SEC) qualityFlags.push('too_short');
             reader.onloadend = async () => {
               const base64Url = reader.result as string;
               await submitVoiceSampleForAnalysis({
-                patientId: 'pt_101',
+                patientId: getCurrentPatientId(),
                 patientName: 'Sachin Srivastava',
                 patientMrn: 'MRN: 88491',
                 audioDataUrl: base64Url,
-                durationSec: Math.round(pcm.length / sr),
-                recordingType: task.id === 'mpt' ? 'mpt' : 'phonation_aaa',
+                durationSec: takeDurationSec,
+                recordingType,
                 patientNote: `Protocol Task: ${task.label}. Auto-saved audio take.`,
                 autoDspMetrics: {
-                  cppsDb: store.cpps ? store.cpps.cppsDb : null,
-                  mptSec: Math.round(pcm.length / sr),
-                  pitchHz: 145,
+                  cppsDb: task.id === 'cpps_phonation' && store.cpps ? store.cpps.cppsDb : null,
+                  cppsVoicedRatio: task.id === 'cpps_phonation' && store.cpps ? store.cpps.voicedFrameRatio : null,
+                  mptSec: task.id === 'mpt' && latestMpt?.detected ? latestMpt.durationSec : null,
+                  phonationDropouts: task.id === 'mpt' && latestMpt?.detected ? latestMpt.dropoutCount : null,
                   noiseFloorDb: floor,
+                  clippedFraction: store.clipped[store.clipped.length - 1] ?? 0,
+                  durationSec: takeDurationSec,
+                  sampleRate: sr,
+                  deviceFingerprint: device?.fingerprint ?? 'unknown',
+                  processingDisabled: device?.processingDisabled ?? false,
+                  qualityFlags,
+                  computedBy: 'device-dsp-v1',
                 },
               });
             };

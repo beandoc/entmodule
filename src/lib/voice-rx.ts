@@ -58,7 +58,7 @@ export function cohortFor(id: VoiceCohort): CohortDescriptor {
 
 /* ----------------------------------------------------------------- protocol */
 
-export type VoiceTaskId = 'calibration' | 'cpps_phonation' | 'mpt' | 'ddk_amr' | 'ddk_smr';
+export type VoiceTaskId = 'calibration' | 'cpps_phonation' | 'passage' | 'mpt' | 'ddk_amr' | 'ddk_smr';
 
 export interface VoiceTask {
   id: VoiceTaskId;
@@ -72,6 +72,34 @@ export interface VoiceTask {
 }
 
 /**
+ * Rainbow Passage excerpt (Fairbanks, 1960; public domain) - the standard
+ * continuous-speech elicitation text in voice acoustics. At a normal reading
+ * pace this runs close to the ~50-word / ~20 s length a 2025 reliability study
+ * found necessary before AVQI measurements stabilise; shorter passages, as used
+ * in the original AVQI protocol, showed thresholds that needed re-evaluation.
+ * See voice-analysis-service.ts and the Praat sidecar (not yet wired) for where
+ * this recording is actually scored.
+ */
+export const READING_PASSAGE_EN =
+  'When the sunlight strikes raindrops in the air, they act as a prism and ' +
+  'form a rainbow. The rainbow is a division of white light into many ' +
+  'beautiful colors. These take the shape of a long round arch, with its ' +
+  'path high above, and its two ends apparently beyond the horizon.';
+
+/**
+ * No validated Hindi AVQI passage or Hindi acoustic norms exist - published
+ * Indian AVQI work is in Tamil, Kannada and Malayalam, not Hindi. This text is
+ * offered so a Hindi-speaking patient can be recorded reading something
+ * natural for the audiologist to LISTEN to; it must never feed the automated
+ * AVQI/CPPS pipeline. voice-analysis-service.ts and the review UI must keep
+ * this distinction visible rather than silently scoring it.
+ */
+export const READING_PASSAGE_HI =
+  'सुबह का समय था। पक्षी पेड़ों पर चहचहा रहे थे और हल्की ठंडी हवा चल रही थी। ' +
+  'गांव के लोग अपने खेतों की ओर जा रहे थे। आसमान साफ था और धूप धीरे-धीरे ' +
+  'फैल रही थी। यह दृश्य बहुत शांत और सुखद लग रहा था।';
+
+/**
  * Task order matters.
  *
  * The comfortable-effort phonation comes BEFORE maximum phonation time. CPPS
@@ -83,6 +111,11 @@ export interface VoiceTask {
  * /pa/ alternating motion rate precedes /pa-ta-ka/ because single-syllable
  * repetition is far more robust to count and gives a usable number even when the
  * sequential take is too degraded to score.
+ *
+ * The reading passage sits between the two: after the comfortable-effort
+ * phonation (so it is not fatigued by MPT) and before MPT (so continuous
+ * speech, which is easier and less effortful than maximum phonation, does not
+ * add fatigue going into the harder task).
  */
 export const VOICE_PROTOCOL: VoiceTask[] = [
   {
@@ -101,6 +134,18 @@ export const VOICE_PROTOCOL: VoiceTask[] = [
     instruction: 'Say "aaa" at your normal comfortable pitch and loudness for about four seconds. Do not push.',
     instructionHi: 'लगभग चार सेकंड तक अपनी सामान्य, आरामदायक आवाज़ में "आ" बोलें। ज़ोर न लगाएं।',
     durationSec: 5,
+    trials: 1,
+  },
+  {
+    id: 'passage',
+    label: 'Read the passage aloud',
+    labelHi: 'अंश ज़ोर से पढ़ें',
+    instruction:
+      `Read this passage aloud at your normal pace, clearly: "${READING_PASSAGE_EN}"`,
+    instructionHi:
+      `इस अंश को अपनी सामान्य गति में, स्पष्ट रूप से ज़ोर से पढ़ें: "${READING_PASSAGE_HI}" ` +
+      '(यह हिस्सा केवल ऑडियोलॉजिस्ट के सुनने के लिए है; स्वचालित स्कोर के लिए उपयोग नहीं होता।)',
+    durationSec: 30,
     trials: 1,
   },
   {
@@ -134,6 +179,15 @@ export const VOICE_PROTOCOL: VoiceTask[] = [
 
 /** Recording is refused above this room level: below roughly 15 dB SNR nothing here is trustworthy. */
 export const MAX_USABLE_NOISE_FLOOR_DB = -35;
+
+/**
+ * Minimum continuous-speech duration before a passage recording is reliable
+ * enough for AVQI-style scoring (roughly 50 words at a normal reading pace). A
+ * 2025 reliability study found AVQI thresholds derived from shorter samples
+ * need re-evaluation - see READING_PASSAGE_EN above. A passage take shorter
+ * than this must be flagged as reduced-reliability, never scored silently.
+ */
+export const MIN_PASSAGE_DURATION_SEC = 18;
 
 /* ------------------------------------------------------------------- VHI-10 */
 

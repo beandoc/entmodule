@@ -3,9 +3,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Mic, MicOff, Play, Square, CheckCircle2, AlertTriangle, ShieldAlert,
-  Activity, ClipboardList, LineChart, Download, Info,
+  Activity, ClipboardList, LineChart, Download, Info, Stethoscope,
 } from 'lucide-react';
 import { useAppData } from '@/lib/app-data-context';
+import { VoiceAnalysisRecorder } from './gaze/VoiceAnalysisRecorder';
 import {
   openMicrophone, micErrorKey, describeDevice, recordFor,
   type MicHandle, type MicErrorKey,
@@ -23,7 +24,7 @@ import {
 } from '@/lib/voice-rx';
 import { VoicePromInventory } from './VoicePromInventory';
 
-type Tab = 'record' | 'history' | 'questionnaires';
+type Tab = 'record' | 'history' | 'questionnaires' | 'send_sample';
 type Stage = 'intro' | 'symptoms' | 'tasks' | 'results';
 
 const MIC_ERROR_COPY: Record<MicErrorKey, { en: string; hi: string }> = {
@@ -226,6 +227,7 @@ export const VoiceRecoveryMonitor: React.FC = () => {
       <nav className="tab-nav" role="tablist">
         {([
           ['record', hi ? 'रिकॉर्ड' : 'Record', Mic],
+          ['send_sample', hi ? 'ऑडियोलॉजिस्ट विश्लेषण' : 'Audiologist Review', Stethoscope],
           ['history', hi ? 'इतिहास' : 'History', LineChart],
           ['questionnaires', hi ? 'प्रश्नावली' : 'Questionnaires', ClipboardList],
         ] as const).map(([id, label, Icon]) => (
@@ -234,7 +236,7 @@ export const VoiceRecoveryMonitor: React.FC = () => {
             role="tab"
             aria-selected={tab === id}
             className={`tab-btn ${tab === id ? 'active' : ''}`}
-            onClick={() => setTab(id)}
+            onClick={() => setTab(id as any)}
           >
             <Icon className="w-4 h-4" aria-hidden /> {label}
           </button>
@@ -392,6 +394,10 @@ export const VoiceRecoveryMonitor: React.FC = () => {
       )}
 
       {tab === 'history' && <HistoryTab sessions={sessions} trend={trend} hi={hi} />}
+
+      {tab === 'send_sample' && (
+        <VoiceAnalysisRecorder hi={hi} />
+      )}
 
       {tab === 'questionnaires' && (
         <div className="space-y-4">

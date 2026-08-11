@@ -26,6 +26,7 @@ import { db } from "@/lib/firebase";
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 
 import { useAppData } from "@/lib/app-data-context";
+import { VoiceAnalysisQueueTab } from "./gaze/VoiceAnalysisQueueTab";
 
 interface AudiogramPoint {
   freq: number; // Hz
@@ -43,6 +44,7 @@ export function AudiologistWorkspace() {
   const [patientName, setPatientName] = useState("Sachin Srivastava");
   const [patientMrn, setPatientMrn] = useState("MRN: 88491");
   const [audiologistName, setAudiologistName] = useState("Mr Lokanath Sahoo");
+  const [activeTab, setActiveTab] = useState<"audiology" | "voice_queue">("audiology");
 
   // Audiogram Frequencies
   const [audiogramData, setAudiogramData] = useState<AudiogramPoint[]>([
@@ -363,43 +365,72 @@ export function AudiologistWorkspace() {
 
         {/* Selected Patient Banner & Registered Patients Selector */}
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4 bg-slate-900/90 p-3.5 rounded-2xl border border-slate-800">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-xl bg-teal-500/20 text-teal-400 border border-teal-500/30">
-              <UserCheck className="w-6 h-6" />
-            </div>
-            <div>
-              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Select Patient Evaluation</p>
-              <select
-                value={selectedPatientId}
-                onChange={(e) => {
-                  const id = e.target.value;
-                  setSelectedPatientId(id);
-                  const selected = registeredPatients.find((p: any) => p.id === id);
-                  if (selected) {
-                    setPatientName(selected.name);
-                    setPatientMrn(selected.mrnOrHprId);
-                  }
-                }}
-                className="bg-slate-950 border border-slate-700 text-xs font-extrabold text-white px-2.5 py-1.5 rounded-xl focus:outline-none focus:border-teal-500"
-              >
-                {registeredPatients.map((pt: any) => (
-                  <option key={pt.id} value={pt.id}>
-                    {pt.name} ({pt.mrnOrHprId})
-                  </option>
-                ))}
-              </select>
-            </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setActiveTab("audiology")}
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all border ${
+                activeTab === "audiology"
+                  ? "bg-indigo-600 text-white border-indigo-400 shadow-md"
+                  : "bg-white/5 text-slate-400 border-white/10 hover:bg-white/10 hover:text-white"
+              }`}
+            >
+              📊 Audiometry & Tinnitus
+            </button>
+            <button
+              onClick={() => setActiveTab("voice_queue")}
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all border ${
+                activeTab === "voice_queue"
+                  ? "bg-indigo-600 text-white border-indigo-400 shadow-md"
+                  : "bg-white/5 text-slate-400 border-white/10 hover:bg-white/10 hover:text-white"
+              }`}
+            >
+              🎙️ Voice Analysis Queue
+            </button>
           </div>
-
-          <button
-            onClick={handlePrintReport}
-            className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-white border border-slate-700 transition"
-          >
-            <Printer className="w-4 h-4 text-indigo-400" />
-            <span>Print Report</span>
-          </button>
         </div>
       </div>
+
+      {activeTab === "voice_queue" ? (
+        <VoiceAnalysisQueueTab audiologistName={audiologistName} />
+      ) : (
+        <>
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 bg-slate-900/90 p-3.5 rounded-2xl border border-slate-800">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-teal-500/20 text-teal-400 border border-teal-500/30">
+                <UserCheck className="w-6 h-6" />
+              </div>
+              <div>
+                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Select Patient Evaluation</p>
+                <select
+                  value={selectedPatientId}
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    setSelectedPatientId(id);
+                    const selected = registeredPatients.find((p: any) => p.id === id);
+                    if (selected) {
+                      setPatientName(selected.name);
+                      setPatientMrn(selected.mrnOrHprId);
+                    }
+                  }}
+                  className="bg-slate-950 border border-slate-700 text-xs font-extrabold text-white px-2.5 py-1.5 rounded-xl focus:outline-none focus:border-teal-500"
+                >
+                  {registeredPatients.map((pt: any) => (
+                    <option key={pt.id} value={pt.id}>
+                      {pt.name} ({pt.mrnOrHprId})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <button
+              onClick={handlePrintReport}
+              className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-white border border-slate-700 transition"
+            >
+              <Printer className="w-4 h-4 text-indigo-400" />
+              <span>Print Report</span>
+            </button>
+          </div>
 
       {/* Main Workspace Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -753,6 +784,8 @@ export function AudiologistWorkspace() {
           </div>
         </div>
       </div>
+        </>
+      )}
     </div>
   );
 }

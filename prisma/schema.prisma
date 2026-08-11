@@ -520,6 +520,32 @@ model VoiceSession {
 
   audioRetained          Boolean      @default(false) // raw WAV kept only on separate explicit consent
 
+  // Praat-native parameters from the reading-passage task, via the
+  // services/voice-analysis sidecar (parselmouth, not a JS reimplementation).
+  // Null whenever the sidecar was unreachable or the passage task was not run -
+  // callers must degrade gracefully, never substitute a default.
+  passageDurationSec     Float?
+  // Below MIN_PASSAGE_DURATION_SEC (see voice-rx.ts): published AVQI thresholds
+  // were derived from longer samples, so a short take is flagged rather than
+  // scored as if it were reliable.
+  avqiReliabilityFlag    Boolean?
+  praatCppsDb            Float?       // distinct from cppsDb above - different engine, not comparable on one trend line
+  hnrDb                  Float?
+  shimmerLocalPct        Float?
+  shimmerLocalDb         Float?
+  ltasSlopeDb            Float?
+  ltasTiltDb             Float?
+  praatF0MedianHz        Float?
+  // Composite AVQI/ABI indices are intentionally not computed yet - see
+  // services/voice-analysis/main.py's module docstring for why (no verified
+  // published regression coefficients as of this build). Both stay null with
+  // a reason until a primary-sourced formula is checked against a worked
+  // example; do not populate them from an unverified formula.
+  avqi                   Float?
+  avqiUnavailableReason  String?
+  abi                    Float?
+  abiUnavailableReason   String?
+
   patientRef             PatientRef   @relation(fields: [patientRefId], references: [id], onDelete: Cascade)
   alerts                 VoiceAlert[]
 

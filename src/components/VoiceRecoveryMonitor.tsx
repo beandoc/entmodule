@@ -22,7 +22,7 @@ import {
   buildVoiceSession, evaluateRedFlags, summariseVoiceTrend, generateVoiceInsight,
   loadVoiceSessions, saveVoiceSession, loadVoiceProfile, saveVoiceProfile,
   MIN_SESSIONS_FOR_ACOUSTIC,
-  type VoiceSession, type VoiceCohort, type SymptomId, type VoiceAlert,
+  type VoiceSession, type VoiceCohort, type SymptomId, type VoiceAlert, type PraatParams,
 } from '@/lib/voice-rx';
 import { VoicePromInventory } from './VoicePromInventory';
 
@@ -74,6 +74,11 @@ export const VoiceRecoveryMonitor: React.FC = () => {
   const [lastSession, setLastSession] = useState<VoiceSession | null>(null);
   const [alerts, setAlerts] = useState<VoiceAlert[]>([]);
   const [promTab, setPromTab] = useState<'VHI-10' | 'EAT-10'>('VHI-10');
+  // Gates whether each take's WAV is uploaded for the audiologist to listen to
+  // (see runTake's auto-save block below). The DSP protocol itself - MPT,
+  // CPPS, DDK, and the alerting built from them - runs entirely on-device and
+  // does not depend on this; only audio leaving the device does.
+  const [audioUploadConsent, setAudioUploadConsent] = useState(false);
 
   // High-frequency values live in refs; only the throttled meter reaches state.
   // Same discipline as AIGazeAnalyticsEngine's rAF loop.
@@ -85,7 +90,8 @@ export const VoiceRecoveryMonitor: React.FC = () => {
     amr: DdkResult | null;
     smr: DdkResult | null;
     clipped: number[];
-  }>({ cpps: null, mptTrials: [], amr: null, smr: null, clipped: [] });
+    praat: PraatParams | null;
+  }>({ cpps: null, mptTrials: [], amr: null, smr: null, clipped: [], praat: null });
 
   useEffect(() => {
     const stored = loadVoiceSessions();
@@ -118,7 +124,7 @@ export const VoiceRecoveryMonitor: React.FC = () => {
       const handle = await openMicrophone();
       micRef.current = handle;
       pumpMeter();
-      resultsRef.current = { cpps: null, mptTrials: [], amr: null, smr: null, clipped: [] };
+      resultsRef.current = { cpps: null, mptTrials: [], amr: null, smr: null, clipped: [], praat: null };
       setTaskIndex(0);
       setTrialIndex(0);
       setNoiseFloor(null);
@@ -129,6 +135,29 @@ export const VoiceRecoveryMonitor: React.FC = () => {
   };
 
   const task = VOICE_PROTOCOL[taskIndex];
+
+  /**
+   * Send the passage take to services/voice-analysis (via the proxy route) for
+   * Praat-native CPPS/HNR/shimmer/LTAS. Never throws - a network failure or a
+   * down sidecar must not block the protocol, it just leaves these measures
+   * null (see PraatParams and buildVoiceSession's handling of `praat`).
+   */
+  const analysePassageWithSidecar = async (pcm: Float32Array, sampleRate: number): Promise<PraatParams | null> => {
+    try {
+      const wav = encodeWav(pcm, sampleRate);
+      const form = new FormData();
+      form.append('file', wav, 'passage.wav');
+      const res = await fetch('/api/voice-analysis-praat', { method: 'POST', body: form });
+      if (!res.ok) return null;
+      const body = await res.json();
+      if (!body.success) return null;
+      const { success, ...praat } = body;
+      return praat as PraatParams;
+    } catch (err) {
+      console.warn('Praat sidecar call failed:', err);
+      return null;
+    }
+  };
 
   /** Run one take of the current task and fold the result into resultsRef. */
   const runTake = async () => {
@@ -152,13 +181,18 @@ export const VoiceRecoveryMonitor: React.FC = () => {
         else if (task.id === 'mpt') store.mptTrials.push(detectPhonation(pcm, sr, floor));
         else if (task.id === 'ddk_amr') store.amr = countDdkSyllables(pcm, sr, floor);
         else if (task.id === 'ddk_smr') store.smr = countDdkSyllables(pcm, sr, floor);
+        // Both branches below send this take's audio off-device - to the Praat
+        // sidecar for scoring, or to the audiologist queue for a human to hear.
+        // Neither runs without audioUploadConsent; the on-device DSP above
+        // (MPT/CPPS/DDK and the alerting built from it) is unaffected either way.
+        else if (task.id === 'passage' && audioUploadConsent) store.praat = await analysePassageWithSidecar(pcm, sr);
 
         // Auto-save WAV voice sample to backend for audiologist portal hearing.
         // Metrics attached here must be the same measurements buildVoiceSession
         // uses below, scoped to what this task actually produced - not the
         // recording's raw duration relabelled as MPT, and never a fixed pitch
         // that was never computed at all.
-        if (pcm && pcm.length > 100) {
+        if (pcm && pcm.length > 100 && audioUploadConsent) {
           try {
             const wavBlob = encodeWav(pcm, sr);
             const reader = new FileReader();
@@ -236,6 +270,7 @@ export const VoiceRecoveryMonitor: React.FC = () => {
       smr: store.smr,
       symptoms,
       clippedFractions: store.clipped,
+      praat: store.praat,
     });
 
     const next = saveVoiceSession(session);
@@ -380,6 +415,19 @@ export const VoiceRecoveryMonitor: React.FC = () => {
                   );
                 })}
               </div>
+              <label className="flex items-start gap-2.5 p-3 rounded-lg border border-slate-200 dark:border-slate-700 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={audioUploadConsent}
+                  onChange={(e) => setAudioUploadConsent(e.target.checked)}
+                  className="mt-0.5 w-4 h-4 accent-teal-600"
+                />
+                <span className="opacity-80">
+                  {hi
+                    ? 'मैं सहमति देता/देती हूं कि मेरी आवाज़ की रिकॉर्डिंग विश्लेषण के लिए भेजी जाए और मेरी ईएनटी/ऑडियोलॉजी टीम द्वारा सुनी जाए। यदि सहमति नहीं दी जाती, तो केवल ऑन-डिवाइस माप सहेजे जाएंगे, ऑडियो कहीं नहीं भेजा जाएगा।'
+                    : 'I consent to my voice recordings being sent for analysis and heard by my ENT/audiology team. Without this, only on-device measurements are saved and no audio leaves this device.'}
+                </span>
+              </label>
               <button type="button" onClick={beginSession} className="btn-primary">
                 <Mic className="w-4 h-4" aria-hidden /> {hi ? 'रिकॉर्डिंग शुरू करें' : 'Start recording'}
               </button>

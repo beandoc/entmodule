@@ -465,8 +465,49 @@ export interface VoiceSession {
   processingDisabled: boolean;
   qualityFlags: string[];
 
+  // From the reading-passage task, via services/voice-analysis (parselmouth).
+  // Null whenever the sidecar was unreachable, the passage was not run, or the
+  // take was too short - see MIN_PASSAGE_DURATION_SEC. praatCppsDb is a
+  // different engine from cppsDb above and must never share a trend line with
+  // it. avqi/abi stay null with a reason until a verified regression exists -
+  // see services/voice-analysis/main.py.
+  passageDurationSec: number | null;
+  avqiReliabilityFlag: boolean | null;
+  praatCppsDb: number | null;
+  hnrDb: number | null;
+  shimmerLocalPct: number | null;
+  shimmerLocalDb: number | null;
+  ltasSlopeDb: number | null;
+  ltasTiltDb: number | null;
+  praatF0MedianHz: number | null;
+  avqi: number | null;
+  avqiUnavailableReason: string | null;
+  abi: number | null;
+  abiUnavailableReason: string | null;
+
   symptoms: SymptomId[];
   createdAt: string;
+}
+
+/**
+ * Response shape from POST /api/voice-analysis-praat (which proxies
+ * services/voice-analysis). Kept separate from VoiceSession so callers that
+ * never touch the sidecar (most of the app) do not need to know its shape.
+ */
+export interface PraatParams {
+  available: boolean;
+  durationSec: number | null;
+  f0MedianHz: number | null;
+  cppsDb: number | null;
+  hnrDb: number | null;
+  shimmerLocalPct: number | null;
+  shimmerLocalDb: number | null;
+  ltasSlopeDb: number | null;
+  ltasTiltDb: number | null;
+  avqi: number | null;
+  avqiUnavailableReason: string | null;
+  abi: number | null;
+  abiUnavailableReason: string | null;
 }
 
 export interface VoiceProfile {
@@ -497,6 +538,8 @@ export interface TakeInputs {
   smr: DdkResult | null;
   symptoms: SymptomId[];
   clippedFractions?: number[];
+  /** From the passage task's sidecar call, if one was made. */
+  praat?: PraatParams | null;
 }
 
 /** Minimum fraction of frames that must pass the voicing gate for CPPS to count. */
@@ -528,6 +571,12 @@ export function buildVoiceSession(input: TakeInputs): VoiceSession {
     !flags.includes('clipping');
   if (input.cpps !== null && !cppsUsable) flags.push('cpps_unreliable');
 
+  const praat = input.praat ?? null;
+  const passageDurationSec = praat?.durationSec ?? null;
+  const passageReliable = passageDurationSec !== null && passageDurationSec >= MIN_PASSAGE_DURATION_SEC;
+  if (praat && !praat.available) flags.push('praat_sidecar_unavailable');
+  if (passageDurationSec !== null && !passageReliable) flags.push('passage_too_short_for_avqi');
+
   return {
     id: newId(),
     date: new Date().toISOString().slice(0, 10),
@@ -544,6 +593,27 @@ export function buildVoiceSession(input: TakeInputs): VoiceSession {
     deviceFingerprint: input.deviceFingerprint,
     processingDisabled: input.processingDisabled,
     qualityFlags: flags,
+    passageDurationSec,
+    avqiReliabilityFlag: passageDurationSec !== null ? passageReliable : null,
+    // Praat measures are reported even on a short/unreliable passage - they are
+    // still real measurements - but avqi/abi are never populated from an
+    // unreliable take, and are never populated at all yet regardless (see
+    // PraatParams and services/voice-analysis/main.py).
+    praatCppsDb: praat?.cppsDb ?? null,
+    hnrDb: praat?.hnrDb ?? null,
+    shimmerLocalPct: praat?.shimmerLocalPct ?? null,
+    shimmerLocalDb: praat?.shimmerLocalDb ?? null,
+    ltasSlopeDb: praat?.ltasSlopeDb ?? null,
+    ltasTiltDb: praat?.ltasTiltDb ?? null,
+    praatF0MedianHz: praat?.f0MedianHz ?? null,
+    avqi: passageReliable ? (praat?.avqi ?? null) : null,
+    avqiUnavailableReason: passageReliable
+      ? (praat?.avqiUnavailableReason ?? null)
+      : (praat ? 'passage_too_short' : null),
+    abi: passageReliable ? (praat?.abi ?? null) : null,
+    abiUnavailableReason: passageReliable
+      ? (praat?.abiUnavailableReason ?? null)
+      : (praat ? 'passage_too_short' : null),
     symptoms: input.symptoms,
     createdAt: new Date().toISOString(),
   };

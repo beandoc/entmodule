@@ -88,6 +88,22 @@ export async function POST(request: Request) {
           : null,
         qualityFlagsJson: JSON.stringify(body.qualityFlags ?? []),
         audioRetained: false,
+        // Praat sidecar output (see services/voice-analysis) - avqi/abi stay
+        // null with a reason at this layer too; see buildVoiceSession in
+        // voice-rx.ts, which is what actually decides these values.
+        passageDurationSec: num(body.passageDurationSec),
+        avqiReliabilityFlag: typeof body.avqiReliabilityFlag === 'boolean' ? body.avqiReliabilityFlag : null,
+        praatCppsDb: num(body.praatCppsDb),
+        hnrDb: num(body.hnrDb),
+        shimmerLocalPct: num(body.shimmerLocalPct),
+        shimmerLocalDb: num(body.shimmerLocalDb),
+        ltasSlopeDb: num(body.ltasSlopeDb),
+        ltasTiltDb: num(body.ltasTiltDb),
+        praatF0MedianHz: num(body.praatF0MedianHz),
+        avqi: num(body.avqi),
+        avqiUnavailableReason: body.avqiUnavailableReason ?? null,
+        abi: num(body.abi),
+        abiUnavailableReason: body.abiUnavailableReason ?? null,
         alerts: {
           create: alerts.map((a) => ({
             patientRefId: scope.patientRefId,

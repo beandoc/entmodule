@@ -5,6 +5,7 @@ import {
   SYMPTOM_ITEMS, COHORTS, cohortFor, VOICE_PROTOCOL,
   buildVoiceSession, evaluateRedFlags, computeBaseline, summariseVoiceTrend, generateVoiceInsight,
   VOICE_MDC, BASELINE_SESSIONS, MIN_SESSIONS_FOR_ACOUSTIC, CONSECUTIVE_BREACHES,
+  MIN_PASSAGE_DURATION_SEC,
 } from '../src/lib/voice-rx.ts';
 
 console.log('--------------------------------------------------------');
@@ -140,6 +141,54 @@ const goodTake = (over = {}) => buildVoiceSession({
   const sparseDdk = goodTake({ amr: { count: 2, ratePerSec: 6, intervalCvPct: 3, peakTimes: [] } });
   assert.equal(sparseDdk.ddkAmrRate, null, 'a two-syllable take is not a DDK measurement');
   console.log('   PASS: best-of-three, quality gating, null-over-plausible\n');
+}
+
+// ----------------------------------------------------
+// 3b. Praat sidecar / AVQI gating
+// ----------------------------------------------------
+console.log('3b. Testing Praat sidecar integration and AVQI gating...');
+{
+  const reliablePraat = {
+    available: true,
+    durationSec: MIN_PASSAGE_DURATION_SEC + 5,
+    f0MedianHz: 140, cppsDb: 11.2, hnrDb: 14.1,
+    shimmerLocalPct: 3.1, shimmerLocalDb: 0.4,
+    ltasSlopeDb: -28, ltasTiltDb: -6,
+    avqi: null, avqiUnavailableReason: 'avqi_regression_not_verified',
+    abi: null, abiUnavailableReason: 'abi_regression_not_verified',
+  };
+
+  const noPraat = goodTake();
+  assert.equal(noPraat.passageDurationSec, null, 'no passage task run, no duration');
+  assert.equal(noPraat.avqiReliabilityFlag, null);
+  assert.equal(noPraat.avqi, null);
+  assert.equal(noPraat.praatCppsDb, null, 'the Praat CPPS field must not be filled from the JS CPPS engine');
+
+  const reliable = goodTake({ praat: reliablePraat });
+  assert.equal(reliable.passageDurationSec, MIN_PASSAGE_DURATION_SEC + 5);
+  assert.equal(reliable.avqiReliabilityFlag, true);
+  assert.equal(reliable.praatCppsDb, 11.2);
+  assert.equal(reliable.hnrDb, 14.1);
+  assert.equal(reliable.avqi, null, 'AVQI stays null until a verified regression exists, even on a reliable take');
+  assert.equal(reliable.avqiUnavailableReason, 'avqi_regression_not_verified');
+  assert.ok(!reliable.qualityFlags.includes('passage_too_short_for_avqi'));
+
+  // Even if a future build populates praat.avqi, a short take must still
+  // force it back to null - the reliability gate applies regardless of what
+  // the sidecar returns.
+  const shortButScored = goodTake({
+    praat: { ...reliablePraat, durationSec: MIN_PASSAGE_DURATION_SEC - 2, avqi: 3.4, avqiUnavailableReason: null },
+  });
+  assert.equal(shortButScored.avqiReliabilityFlag, false);
+  assert.equal(shortButScored.avqi, null, 'a short passage must never surface an AVQI score');
+  assert.equal(shortButScored.avqiUnavailableReason, 'passage_too_short');
+  assert.ok(shortButScored.qualityFlags.includes('passage_too_short_for_avqi'));
+
+  const sidecarDown = goodTake({ praat: { ...reliablePraat, available: false, durationSec: null, cppsDb: null } });
+  assert.ok(sidecarDown.qualityFlags.includes('praat_sidecar_unavailable'));
+  assert.equal(sidecarDown.avqiReliabilityFlag, null, 'no duration to judge reliability against');
+
+  console.log('   PASS: praat fields pass through, AVQI stays gated on reliability and verification\n');
 }
 
 // ----------------------------------------------------

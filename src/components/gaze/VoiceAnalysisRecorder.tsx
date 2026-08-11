@@ -64,6 +64,13 @@ export const VoiceAnalysisRecorder: React.FC<VoiceAnalysisRecorderProps> = ({
   const [metrics, setMetrics] = useState<AutoDspMetrics | null>(null);
   const [captureError, setCaptureError] = useState<string | null>(null);
 
+  // The audio itself (not just its derived metrics) is stored and later heard
+  // by the reviewing audiologist - unlike /api/voice-sessions, which never
+  // receives audio at all. That is a real privacy decision the patient makes
+  // per recording, not an implicit default; it resets on every new take so
+  // consent cannot be inherited from an earlier, different recording.
+  const [audioConsent, setAudioConsent] = useState(false);
+
   // Raw PCM capture. MediaRecorder is deliberately not used - it encodes to Opus
   // or AAC, and lossy coding of a dysphonic voice is exactly the damage that
   // makes phone-recorded acoustic measures untrustworthy. See voice-capture.ts.
@@ -181,25 +188,68 @@ export const VoiceAnalysisRecorder: React.FC<VoiceAnalysisRecorderProps> = ({
     };
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setCaptureError(null);
-    const blobUrl = URL.createObjectURL(file);
-    setAudioBlobUrl(blobUrl);
-    setRecordingDuration(file.size > 0 ? 8 : 5);
+    setMetrics(null);
+    setAudioConsent(false);
+    setAudioBlobUrl(null);
+    setAudioBase64Url(null);
 
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      setAudioBase64Url(reader.result as string);
-    };
-    reader.readAsDataURL(file);
+    const blobUrl = URL.createObjectURL(file);
+
+    // Decode to raw PCM so an uploaded file gets the same real measurements as
+    // a live recording - duration was previously guessed from file.size (8s if
+    // non-empty, 5s otherwise), and no metrics were computed at all. A stale
+    // AutoDspMetrics from a prior take could also survive onto this file, which
+    // is why metrics is cleared above before decoding starts.
+    try {
+      const Ctor: typeof AudioContext | undefined =
+        typeof window !== 'undefined'
+          ? window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+          : undefined;
+      if (!Ctor) throw new Error('no-audio-context');
+
+      const arrayBuffer = await file.arrayBuffer();
+      const ctx = new Ctor();
+      const decoded = await ctx.decodeAudioData(arrayBuffer);
+      const pcm = decoded.getChannelData(0); // mono; matches the live-capture path
+      const sampleRate = decoded.sampleRate;
+      await ctx.close();
+
+      setAudioBlobUrl(blobUrl);
+      setRecordingDuration(pcm.length / sampleRate);
+
+      // Recording-condition fields (noise floor, clipping, processing flags) do
+      // not apply to a file whose provenance is unknown - unlike a live take,
+      // this was not captured under voice-capture.ts's controlled constraints.
+      const uploadedDevice = {
+        fingerprint: 'uploaded-file',
+        settings: { sampleRate },
+        processingDisabled: false,
+      };
+      setMetrics(analyseTake(pcm, sampleRate, uploadedDevice, recordingType));
+
+      const reader = new FileReader();
+      reader.onloadend = () => setAudioBase64Url(reader.result as string);
+      reader.readAsDataURL(file);
+    } catch (err) {
+      console.error('Failed to decode uploaded audio:', err);
+      URL.revokeObjectURL(blobUrl);
+      setCaptureError(
+        hi
+          ? 'यह ऑडियो फाइल पढ़ी नहीं जा सकी। कृपया .wav, .mp3 या .m4a फाइल आज़माएं।'
+          : 'This audio file could not be read. Please try a .wav, .mp3, or .m4a file.',
+      );
+    }
   };
 
   const startRecording = async () => {
     setAudioBlobUrl(null);
     setAudioBase64Url(null);
     setMetrics(null);
+    setAudioConsent(false);
     setCaptureError(null);
     setRecordTimeSec(0);
 
@@ -296,6 +346,15 @@ export const VoiceAnalysisRecorder: React.FC<VoiceAnalysisRecorderProps> = ({
       return;
     }
 
+    if (!audioConsent) {
+      alert(
+        hi
+          ? 'भेजने से पहले कृपया ऑडियो संग्रहण की सहमति दें।'
+          : 'Please confirm consent to store this recording before sending.',
+      );
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       const newSubmission = await submitVoiceSampleForAnalysis({
@@ -318,6 +377,7 @@ export const VoiceAnalysisRecorder: React.FC<VoiceAnalysisRecorderProps> = ({
       setAudioBlobUrl(null);
       setAudioBase64Url(null);
       setMetrics(null);
+      setAudioConsent(false);
       setPatientNote('');
       setSelectedSymptoms([]);
 
@@ -569,9 +629,25 @@ export const VoiceAnalysisRecorder: React.FC<VoiceAnalysisRecorderProps> = ({
         </div>
 
         {/* Submit Button & Confirmation */}
-        <div className="pt-2">
+        <div className="pt-2 space-y-3">
+          {audioBase64Url && (
+            <label className="flex items-start gap-2.5 p-3 bg-white/5 border border-white/10 rounded-xl text-xs text-slate-300 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={audioConsent}
+                onChange={(e) => setAudioConsent(e.target.checked)}
+                className="mt-0.5 w-4 h-4 accent-teal-500"
+              />
+              <span>
+                {hi
+                  ? 'मैं सहमति देता/देती हूं कि यह ऑडियो रिकॉर्डिंग सुरक्षित रखी जाए और मेरी ईएनटी/ऑडियोलॉजी टीम द्वारा समीक्षा के लिए सुनी जाए।'
+                  : 'I consent to this voice recording being stored and heard by my ENT/audiology care team for review.'}
+              </span>
+            </label>
+          )}
+
           {submitSuccessMsg && (
-            <div className="mb-3 p-3 bg-emerald-950/60 border border-emerald-500/50 text-emerald-200 text-xs rounded-xl flex items-center gap-2">
+            <div className="p-3 bg-emerald-950/60 border border-emerald-500/50 text-emerald-200 text-xs rounded-xl flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
               <span>{submitSuccessMsg}</span>
             </div>
@@ -582,6 +658,7 @@ export const VoiceAnalysisRecorder: React.FC<VoiceAnalysisRecorderProps> = ({
             disabled={
               !audioBase64Url ||
               isSubmitting ||
+              !audioConsent ||
               (metrics?.qualityFlags.some((f) => BLOCKING_FLAGS.includes(f)) ?? false)
             }
             className="w-full py-3 rounded-xl bg-gradient-to-r from-teal-600 to-cyan-600 hover:from-teal-500 hover:to-cyan-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-teal-600/30 transition-all disabled:opacity-50"

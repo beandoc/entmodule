@@ -282,12 +282,12 @@ export const EyeTracingGraph: React.FC<EyeTracingGraphProps> = ({
 
   const metrics = useMemo(() => {
     if (vngScore) {
-      const g = (vngScore.velocityGain ?? 0).toFixed(2);
+      const pqi = vngScore.pursuitQualityIndex ?? 0;
       return {
-        rightGain: g,
-        leftGain: g,
+        pqiScore: `${pqi}/100`,
+        slipLevel: (vngScore.slipLevel || 'moderate').toUpperCase(),
         disagreementDeg: (vngScore.binocular?.meanDisconjugacyDeg ?? 0).toFixed(1),
-        quality: vngScore.qualityLabel === 'excellent' || vngScore.qualityLabel === 'good' ? 'OPTIMAL' : 'SACCADIC',
+        quality: (vngScore.qualityLabel || 'impaired').toUpperCase(),
       };
     }
 
@@ -452,24 +452,24 @@ export const EyeTracingGraph: React.FC<EyeTracingGraphProps> = ({
       {/* Real-Time Clinical Metrics Readout */}
       {metrics && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-xs">
-          <div className="bg-red-950/30 border border-red-500/30 rounded-xl p-2.5 text-center">
-            <span className="text-[10px] text-slate-400 font-bold uppercase block">{hi ? 'दाहिनी आंख गेन' : 'Right Eye Gain'}</span>
-            <span className="font-mono text-base font-bold text-red-400">{metrics.rightGain}</span>
+          <div className="bg-teal-950/40 border border-teal-500/30 rounded-xl p-2.5 text-center">
+            <span className="text-[10px] text-slate-400 font-bold uppercase block">{hi ? 'PQI स्कोर' : 'PQI Score'}</span>
+            <span className="font-mono text-base font-bold text-teal-300">{'pqiScore' in metrics ? (metrics as any).pqiScore : `${(metrics as any).rightGain}`}</span>
           </div>
 
-          <div className="bg-blue-950/30 border border-blue-500/30 rounded-xl p-2.5 text-center">
-            <span className="text-[10px] text-slate-400 font-bold uppercase block">{hi ? 'बाईं आंख गेन' : 'Left Eye Gain'}</span>
-            <span className="font-mono text-base font-bold text-blue-400">{metrics.leftGain}</span>
+          <div className="bg-sky-950/40 border border-sky-500/30 rounded-xl p-2.5 text-center">
+            <span className="text-[10px] text-slate-400 font-bold uppercase block">{hi ? 'दृष्टि विचलन' : 'Gaze Slip Level'}</span>
+            <span className="font-mono text-base font-bold text-sky-300">{'slipLevel' in metrics ? (metrics as any).slipLevel : (metrics as any).leftGain}</span>
           </div>
 
-          <div className="bg-amber-950/30 border border-amber-500/30 rounded-xl p-2.5 text-center">
+          <div className="bg-amber-950/40 border border-amber-500/30 rounded-xl p-2.5 text-center">
             <span className="text-[10px] text-slate-400 font-bold uppercase block">{hi ? 'आंख असंतुलन (Δ Deg)' : 'Binocular Offset'}</span>
             <span className="font-mono text-base font-bold text-amber-300">±{metrics.disagreementDeg}°</span>
           </div>
 
-          <div className="bg-teal-950/30 border border-teal-500/30 rounded-xl p-2.5 text-center">
-            <span className="text-[10px] text-slate-400 font-bold uppercase block">{hi ? 'ट्रैकिंग गुणवत्ता' : 'Pursuit Fidelity'}</span>
-            <span className="font-bold text-teal-300">{metrics.quality}</span>
+          <div className="bg-indigo-950/40 border border-indigo-500/30 rounded-xl p-2.5 text-center">
+            <span className="text-[10px] text-slate-400 font-bold uppercase block">{hi ? 'ट्रैकिंग श्रेणी' : 'Pursuit Grade'}</span>
+            <span className="font-bold text-indigo-300">{metrics.quality}</span>
           </div>
         </div>
       )}

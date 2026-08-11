@@ -173,60 +173,104 @@ export const VNGReportCard: React.FC<VNGReportCardProps> = ({
       {/* 1. Smooth Pursuit Panel */}
       {mode === 'smooth_pursuit' && pursuitScore && (
         <div className="space-y-4">
+          {/* Main Honest Pursuit Metrics */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <MetricCard
-              title={locale === 'hi' ? 'वेलोसिटी गेन' : 'Velocity Gain'}
-              value={pursuitScore.velocityGain.toFixed(2)}
-              subtitle={`95% CI: [${pursuitScore.gainConfidenceInterval.ciLower.toFixed(
-                2
-              )} - ${pursuitScore.gainConfidenceInterval.ciUpper.toFixed(2)}]`}
-              status={pursuitScore.velocityGain >= 0.85 ? 'normal' : 'impaired'}
-            />
-            <MetricCard
-              title={locale === 'hi' ? 'दिशात्मक सहमति' : 'Directional Agreement'}
-              value={pursuitScore.directionalAgreement.toFixed(2)}
-              subtitle={
-                pursuitScore.directionalAgreement > 0.7
-                  ? 'In-Phase Tracking'
-                  : 'Phase Mismatch'
+              title={locale === 'hi' ? 'परस्यूट क्वालिटी इंडेक्स (PQI)' : 'Pursuit Quality Index (PQI)'}
+              value={`${pursuitScore.pursuitQualityIndex ?? 0} / 100`}
+              subtitle={`Band: ${(pursuitScore.qualityLabel || 'IMPAIRED').toUpperCase()}`}
+              status={
+                (pursuitScore.pursuitQualityIndex ?? 0) >= 60
+                  ? 'normal'
+                  : (pursuitScore.pursuitQualityIndex ?? 0) >= 40
+                  ? 'warning'
+                  : 'impaired'
               }
-              status={pursuitScore.directionalAgreement >= 0.7 ? 'normal' : 'impaired'}
             />
             <MetricCard
-              title={locale === 'hi' ? 'रेटिनल स्लिप दर' : 'Retinal Slip Velocity'}
-              value={`${pursuitScore.retinalSlipVelocityDegPerSec}°/s`}
-              subtitle={`P95: ${pursuitScore.retinalSlipP95DegPerSec}°/s`}
-              status={pursuitScore.retinalSlipVelocityDegPerSec < 15 ? 'normal' : 'impaired'}
+              title={locale === 'hi' ? 'रेटिनल स्लिप स्तर' : 'Retinal Slip Level'}
+              value={(pursuitScore.slipLevel || 'moderate').toUpperCase()}
+              subtitle={locale === 'hi' ? 'दृष्टि विचलन स्तर' : 'Functional gaze drift'}
+              status={pursuitScore.slipLevel === 'low' ? 'normal' : pursuitScore.slipLevel === 'moderate' ? 'warning' : 'impaired'}
+            />
+            <MetricCard
+              title={locale === 'hi' ? 'ट्रैकिंग टाइमिंग' : 'Tracking Timing'}
+              value={(pursuitScore.timingLabel || 'normal').toUpperCase()}
+              subtitle={
+                pursuitScore.timingLabel === 'normal'
+                  ? (locale === 'hi' ? 'समकालिक ट्रैकिंग' : 'In-phase sync')
+                  : (locale === 'hi' ? 'फेज विलंब' : 'Phase lag detected')
+              }
+              status={pursuitScore.timingLabel === 'normal' ? 'normal' : 'warning'}
             />
             <MetricCard
               title={locale === 'hi' ? 'कैच-अप सैकेड' : 'Catch-Up Saccades'}
               value={`${pursuitScore.catchUpSaccadeCount}`}
-              subtitle={locale === 'hi' ? 'सुधारात्मक गति' : 'Correction events'}
+              subtitle={locale === 'hi' ? 'सुधारात्मक जंप' : 'Correction events'}
               status={pursuitScore.catchUpSaccadeCount <= 3 ? 'normal' : 'warning'}
             />
           </div>
 
-          {/* Frequency Gain Breakdown */}
-          {pursuitScore.frequencyGains && pursuitScore.frequencyGains.length > 0 && (
-            <div className="bg-slate-950/40 p-4 rounded-lg border border-slate-800">
-              <h4 className="text-xs font-semibold text-teal-300 uppercase tracking-wider mb-3">
-                {locale === 'hi'
-                  ? 'आवृत्ति-विशिष्ट गेन ब्रेकडाउन (Frequency-Domain Gain)'
-                  : 'Frequency-Specific Gain Breakdown'}
-              </h4>
-              <div className="grid grid-cols-3 gap-3 text-center text-xs">
-                {pursuitScore.frequencyGains.map((fg, idx) => (
-                  <div key={idx} className="p-2 bg-slate-900 rounded border border-slate-800">
-                    <span className="text-slate-400 block font-mono">{fg.frequencyHz} Hz</span>
-                    <span className="text-base font-bold text-slate-100">{fg.gain}</span>
-                    <span className="text-[10px] text-slate-400 block mt-0.5">
-                      {locale === 'hi' ? 'लैग' : 'Lag'}: {fg.phaseLagDeg}°
-                    </span>
-                  </div>
-                ))}
+          {/* Advanced Telemetry Collapsible View */}
+          <details className="bg-slate-950/50 p-3.5 rounded-xl border border-slate-800 transition-all">
+            <summary className="cursor-pointer font-semibold text-xs text-teal-400 flex items-center justify-between select-none">
+              <span>🔬 {locale === 'hi' ? 'उन्नत क्लिनिशियन टेलीमेट्री (Raw Telemetry)' : 'Advanced Clinician Telemetry (Raw Values)'}</span>
+              <span className="text-[10px] text-slate-500 font-mono font-normal">{locale === 'hi' ? 'विस्तार करें ▼' : 'Click to view ▼'}</span>
+            </summary>
+            <div className="mt-3 pt-3 border-t border-slate-800 space-y-3">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                <div className="p-2.5 bg-slate-900 rounded-lg border border-slate-800">
+                  <span className="text-slate-400 block font-medium">Velocity Gain (Est)</span>
+                  <span className="font-mono text-base font-bold text-slate-100">{pursuitScore.velocityGain.toFixed(2)}</span>
+                  <span className="text-[10px] text-slate-400 block mt-0.5">
+                    95% CI: [{pursuitScore.gainConfidenceInterval?.ciLower?.toFixed(2) ?? '0.00'} - {pursuitScore.gainConfidenceInterval?.ciUpper?.toFixed(2) ?? '0.00'}]
+                  </span>
+                </div>
+
+                <div className="p-2.5 bg-slate-900 rounded-lg border border-slate-800">
+                  <span className="text-slate-400 block font-medium">Directional Agreement</span>
+                  <span className="font-mono text-base font-bold text-slate-100">{pursuitScore.directionalAgreement.toFixed(2)}</span>
+                  <span className="text-[10px] text-slate-400 block mt-0.5">
+                    {pursuitScore.directionalAgreement > 0.7 ? 'In-Phase' : 'Phase Mismatch'}
+                  </span>
+                </div>
+
+                <div className="p-2.5 bg-slate-900 rounded-lg border border-slate-800">
+                  <span className="text-slate-400 block font-medium">Retinal Slip Rate</span>
+                  <span className="font-mono text-base font-bold text-slate-100">{pursuitScore.retinalSlipVelocityDegPerSec}°/s</span>
+                  <span className="text-[10px] text-slate-400 block mt-0.5">
+                    P95: {pursuitScore.retinalSlipP95DegPerSec}°/s
+                  </span>
+                </div>
+
+                <div className="p-2.5 bg-slate-900 rounded-lg border border-slate-800">
+                  <span className="text-slate-400 block font-medium">Phase Lag</span>
+                  <span className="font-mono text-base font-bold text-slate-100">{pursuitScore.phaseLagDeg}°</span>
+                  <span className="text-[10px] text-slate-400 block mt-0.5">
+                    {pursuitScore.phaseLagMs} ms
+                  </span>
+                </div>
               </div>
+
+              {/* Frequency Gain Breakdown */}
+              {pursuitScore.frequencyGains && pursuitScore.frequencyGains.length > 0 && (
+                <div className="pt-2">
+                  <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block mb-2">
+                    {locale === 'hi' ? 'आवृत्ति गेन (Frequency Domain)' : 'Frequency-Domain Gain Breakdown:'}
+                  </span>
+                  <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                    {pursuitScore.frequencyGains.map((fg, idx) => (
+                      <div key={idx} className="p-2 bg-slate-900 rounded border border-slate-800/80">
+                        <span className="text-slate-400 block font-mono text-[11px]">{fg.frequencyHz} Hz</span>
+                        <span className="text-sm font-bold text-slate-200">{fg.gain}</span>
+                        <span className="text-[10px] text-slate-400 block">Lag: {fg.phaseLagDeg}°</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
-          )}
+          </details>
         </div>
       )}
 

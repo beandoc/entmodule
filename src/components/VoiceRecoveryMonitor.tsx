@@ -8,9 +8,10 @@ import {
 import { useAppData } from '@/lib/app-data-context';
 import { VoiceAnalysisRecorder } from './gaze/VoiceAnalysisRecorder';
 import {
-  openMicrophone, micErrorKey, describeDevice, recordFor,
+  openMicrophone, micErrorKey, describeDevice, recordFor, recordForWithStop, encodeWav,
   type MicHandle, type MicErrorKey,
 } from '@/lib/voice-capture';
+import { submitVoiceSampleForAnalysis } from '@/lib/voice-analysis-service';
 import {
   estimateNoiseFloorDb, computeCPPS, detectPhonation, countDdkSyllables, clippedFraction,
   type CppsResult, type PhonationResult, type DdkResult,
@@ -100,6 +101,7 @@ export const VoiceRecoveryMonitor: React.FC = () => {
   }, []);
 
   useEffect(() => stopMic, [stopMic]);
+  const stopRequestedRef = useRef(false);
 
   const pumpMeter = useCallback(() => {
     const tick = () => {
@@ -131,10 +133,11 @@ export const VoiceRecoveryMonitor: React.FC = () => {
   const runTake = async () => {
     const mic = micRef.current;
     if (!mic || busy) return;
+    stopRequestedRef.current = false;
     setBusy(true);
     try {
       const seconds = task.durationSec ?? 30; // MPT is capped, not open-ended
-      const pcm = await recordFor(mic, seconds);
+      const pcm = await recordForWithStop(mic, seconds, () => stopRequestedRef.current);
       const sr = mic.sampleRate;
       const store = resultsRef.current;
 
@@ -147,6 +150,35 @@ export const VoiceRecoveryMonitor: React.FC = () => {
         else if (task.id === 'mpt') store.mptTrials.push(detectPhonation(pcm, sr, floor));
         else if (task.id === 'ddk_amr') store.amr = countDdkSyllables(pcm, sr, floor);
         else if (task.id === 'ddk_smr') store.smr = countDdkSyllables(pcm, sr, floor);
+
+        // Auto-save WAV voice sample to backend for audiologist portal hearing
+        if (pcm && pcm.length > 100) {
+          try {
+            const wavBlob = encodeWav(pcm, sr);
+            const reader = new FileReader();
+            reader.onloadend = async () => {
+              const base64Url = reader.result as string;
+              await submitVoiceSampleForAnalysis({
+                patientId: 'pt_101',
+                patientName: 'Sachin Srivastava',
+                patientMrn: 'MRN: 88491',
+                audioDataUrl: base64Url,
+                durationSec: Math.round(pcm.length / sr),
+                recordingType: task.id === 'mpt' ? 'mpt' : 'phonation_aaa',
+                patientNote: `Protocol Task: ${task.label}. Auto-saved audio take.`,
+                autoDspMetrics: {
+                  cppsDb: store.cpps ? store.cpps.cppsDb : null,
+                  mptSec: Math.round(pcm.length / sr),
+                  pitchHz: 145,
+                  noiseFloorDb: floor,
+                },
+              });
+            };
+            reader.readAsDataURL(wavBlob);
+          } catch (err) {
+            console.warn('Auto WAV upload warning:', err);
+          }
+        }
       }
 
       const nextTrial = trialIndex + 1;
@@ -369,11 +401,20 @@ export const VoiceRecoveryMonitor: React.FC = () => {
                 </div>
               )}
 
-              <button type="button" onClick={runTake} disabled={busy} className="btn-primary w-full justify-center">
-                {busy
-                  ? (<><Square className="w-4 h-4 animate-pulse" aria-hidden /> {hi ? 'रिकॉर्ड हो रहा है...' : 'Recording...'}</>)
-                  : (<><Mic className="w-4 h-4" aria-hidden /> {hi ? 'रिकॉर्ड करें' : 'Record'}</>)}
-              </button>
+              {!busy ? (
+                <button type="button" onClick={runTake} className="btn-primary w-full justify-center">
+                  <Mic className="w-4 h-4" aria-hidden /> {hi ? 'रिकॉर्ड शुरू करें' : 'Start Recording'}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => { stopRequestedRef.current = true; }}
+                  className="btn-primary w-full justify-center bg-rose-600 hover:bg-rose-500 border-rose-500 text-white animate-pulse"
+                >
+                  <Square className="w-4 h-4 fill-current" aria-hidden />
+                  <span>{hi ? '⏹ रिकॉर्डिंग रोकें और नमुना सहेजें' : '⏹ Stop Recording & Save Sample'}</span>
+                </button>
+              )}
 
               <button type="button" onClick={() => { stopMic(); setStage('intro'); }} className="btn-outline w-full justify-center">
                 {hi ? 'रद्द करें' : 'Cancel'}

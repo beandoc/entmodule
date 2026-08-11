@@ -319,3 +319,22 @@ export function recordFor(handle: MicHandle, seconds: number): Promise<Float32Ar
     setTimeout(() => resolve(handle.takeBuffer()), seconds * 1000);
   });
 }
+
+/** Buffer for up to `seconds`, checking `shouldStop()` every 100ms. Resolves immediately when stopped. */
+export function recordForWithStop(
+  handle: MicHandle,
+  seconds: number,
+  shouldStop: () => boolean
+): Promise<Float32Array> {
+  handle.start();
+  return new Promise((resolve) => {
+    const startTime = Date.now();
+    const interval = setInterval(() => {
+      const elapsed = (Date.now() - startTime) / 1000;
+      if (elapsed >= seconds || shouldStop()) {
+        clearInterval(interval);
+        resolve(handle.takeBuffer());
+      }
+    }, 100);
+  });
+}

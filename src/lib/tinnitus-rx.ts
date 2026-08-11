@@ -55,10 +55,11 @@ export const STORAGE_KEYS = {
  * Human-typeable prescription code, in the spirit of the CH-ENT-#### OPD tokens.
  * Example: RX-8000-45-ACRN-3x8 — 8000 Hz, -45 dB, ACRN, 3 cycles on / 8 rest.
  */
-export const RX_PATTERN = /^RX-(\d{3,5})-(\d{1,2})-(ACRN|NOTCH|BROAD|BINAURAL|SOUND)-(\d{1,2})x(\d{1,2})$/i;
+export const RX_PATTERN = /^RX-(\d{3,5})-(\d{1,2})-(TONE|ACRN|NOTCH|BROAD|BINAURAL|SOUND)-(\d{1,2})x(\d{1,2})$/i;
 
 /** Abbreviate SOUNDSCAPE to SOUND so the RX code stays under the typeable character limit. */
 const ENGINE_ENCODE: Record<RxEngine, string> = {
+  TONE: 'TONE',
   ACRN: 'ACRN',
   NOTCH: 'NOTCH',
   BROAD: 'BROAD',
@@ -68,6 +69,7 @@ const ENGINE_ENCODE: Record<RxEngine, string> = {
 
 /** Reverse map for decoding abbreviated engine tokens. */
 const TOKEN_TO_ENGINE: Record<string, RxEngine> = {
+  TONE: 'TONE',
   ACRN: 'ACRN',
   NOTCH: 'NOTCH',
   BROAD: 'BROAD',

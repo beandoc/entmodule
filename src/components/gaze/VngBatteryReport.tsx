@@ -1,12 +1,11 @@
-import React, { useMemo, useState } from 'react';
-import { Printer, FileText, CheckCircle2, Circle, ShieldCheck, BarChart3, Activity } from 'lucide-react';
+import React, { useMemo } from 'react';
+import { Printer, FileText, CheckCircle2, BarChart3, AlertTriangle } from 'lucide-react';
 import { useAppData } from '@/lib/app-data-context';
 import { getCurrentPatientId } from '@/lib/patient-context';
 import { GazeSession, GazePoint } from '@/lib/gaze-tracking';
 import {
-  NystagmusVNGScore, SmoothPursuitVNGScore, SaccadeScore, OknScore, VorX2Score,
-  computeHospitalPursuitGains, computeHospitalSaccadeReport, scoreVhitBattery,
-  CaloricTestSummary, CvempTestSummary
+  NystagmusVNGScore, SmoothPursuitVNGScore,
+  computeHospitalPursuitGains
 } from '@/lib/vng-analytics';
 
 interface ReportSectionDef {
@@ -19,8 +18,8 @@ const NYSTAGMUS_SECTIONS: ReportSectionDef[] = [
   { exerciseId: 'pursuit-spontaneous', en: 'Spontaneous Nystagmus', hi: 'स्वतःस्फूर्त निस्टागमस' },
   { exerciseId: 'pursuit-gaze-left', en: 'Gaze-Induced Nystagmus — Left Gaze', hi: 'गेज़-प्रेरित निस्टागमस — बाएं' },
   { exerciseId: 'pursuit-gaze-right', en: 'Gaze-Induced Nystagmus — Right Gaze', hi: 'गेज़-प्रेरित निस्टागमस — दाएं' },
-  { exerciseId: 'pursuit-gaze-up', en: 'Gaze-Induced Nystagmus — Up Gaze', hi: 'गेज़-प्रेरित निस्टागमस — ऊपर' },
-  { exerciseId: 'pursuit-gaze-down', en: 'Gaze-Induced Nystagmus — Down Gaze', hi: 'गेज़-प्रेरित निस्टागमस — नीचे' },
+  { exerciseId: 'pursuit-gaze-up', en: 'Gaze-Induced Nystagmus — Upper Gaze', hi: 'गेज़-प्रेरित निस्टागमस — ऊपर' },
+  { exerciseId: 'pursuit-gaze-down', en: 'Gaze-Induced Nystagmus — Lower Gaze', hi: 'गेज़-प्रेरित निस्टागमस — नीचे' },
 ];
 
 const PURSUIT_SECTIONS: ReportSectionDef[] = [
@@ -28,18 +27,7 @@ const PURSUIT_SECTIONS: ReportSectionDef[] = [
   { exerciseId: 'pursuit-vertical', en: 'Smooth Pursuit — Vertical', hi: 'स्मूथ परस्यूट — लंबवत' },
 ];
 
-const SACCADE_SECTIONS: ReportSectionDef[] = [
-  { exerciseId: 'pursuit-saccadic', en: 'Fixed Saccade Main Sequence', hi: 'फिक्स्ड सैकेड मुख्य अनुक्रम' },
-  { exerciseId: 'pursuit-random-saccade', en: 'Random Saccade Main Sequence', hi: 'रैंडम सैकेड मुख्य अनुक्रम' },
-];
-
-const OTHER_SECTIONS: ReportSectionDef[] = [
-  { exerciseId: 'pursuit-optokinetic', en: 'Optokinetic (OKN 30°/s)', hi: 'ऑप्टोकाइनेटिक (OKN 30°/s)' },
-  { exerciseId: 'pursuit-positional', en: 'Positional Supine Head Roll', hi: 'पोजीशनल सुपाइन हेड रोल' },
-  { exerciseId: 'pursuit-vhit', en: 'vHIT 6-Canal VOR Gain (Lateral/Posterior/Anterior)', hi: 'vHIT 6-केनाल VOR गेन' },
-];
-
-const ALL_SECTIONS = [...NYSTAGMUS_SECTIONS, ...PURSUIT_SECTIONS, ...SACCADE_SECTIONS, ...OTHER_SECTIONS];
+const ALL_SECTIONS = [...NYSTAGMUS_SECTIONS, ...PURSUIT_SECTIONS];
 
 function latestByExerciseId(sessions: GazeSession[], exerciseId: string): GazeSession | null {
   let latest: GazeSession | null = null;
@@ -55,30 +43,30 @@ function fmt(v: number | undefined, digits = 1, suffix = ''): string {
 }
 
 function qualityBadgeHtml(grade: string | undefined): string {
-  const g = grade ?? 'invalid';
+  const g = grade ?? 'unscoreable';
   const color = g === 'excellent' ? '#059669' : g === 'good' ? '#2563eb' : g === 'fair' ? '#d97706' : '#dc2626';
   return `<span style="color:${color}; font-weight:bold; text-transform:uppercase; font-size:11px;">${g}</span>`;
 }
 
 export const VngBatteryReport: React.FC<{ hi: boolean; sessions: GazeSession[] }> = ({ hi, sessions }) => {
   const { registeredUsers } = useAppData();
-  const [includeCaloricCvemp, setIncludeCaloricCvemp] = useState(true);
 
   const patient = useMemo(() => {
     const patientId = getCurrentPatientId();
     const found = (registeredUsers || []).find((u: any) => u.id === patientId);
     return {
-      name: found?.name ?? 'Dipti Gohan / Patient',
-      mrn: found?.mrnOrHprId ?? 'NEDIGO43796',
-      age: found?.age ?? 36,
-      gender: found?.gender ?? 'Female',
+      name: found?.name ?? (hi ? 'अनाम रोगी' : 'Anonymous Patient'),
+      mrn: found?.mrnOrHprId ?? 'N/A',
+      age: found?.age ?? '—',
+      gender: found?.gender ?? '—',
     };
-  }, [registeredUsers]);
+  }, [registeredUsers, hi]);
 
   const sectionStatus = useMemo(
     () => ALL_SECTIONS.map((sec) => ({ sec, session: latestByExerciseId(sessions, sec.exerciseId) })),
     [sessions]
   );
+  
   const recordedCount = sectionStatus.filter((s) => s.session).length;
 
   const handlePrintReport = () => {
@@ -89,15 +77,15 @@ export const VngBatteryReport: React.FC<{ hi: boolean; sessions: GazeSession[] }
       const session = latestByExerciseId(sessions, sec.exerciseId);
       const score = session?.vngScore as NystagmusVNGScore | undefined;
       if (!score) {
-        return `<tr><td style="text-align:left;">${sec.en}</td><td>0</td><td>0</td><td>0</td><td>0</td><td style="color:#94a3b8;">Normal / Not Recorded</td></tr>`;
+        return `<tr><td style="text-align:left;">${sec.en}</td><td>—</td><td>—</td><td>—</td><td>—</td><td style="color:#94a3b8;">Not Recorded</td></tr>`;
       }
       return `<tr>
         <td style="text-align:left; font-weight:600;">${sec.en}</td>
-        <td>${fmt(score.rightEye.spvDegPerSec)}</td>
-        <td>${fmt(score.rightEye.beatsPer30Sec, 0)}</td>
-        <td>${fmt(score.leftEye.spvDegPerSec)}</td>
-        <td>${fmt(score.leftEye.beatsPer30Sec, 0)}</td>
-        <td>${qualityBadgeHtml(score.validity.qualityGrade)}</td>
+        <td>${fmt(score.rightEye?.spvDegPerSec)}</td>
+        <td>${fmt(score.rightEye?.beatsPer30Sec, 0)}</td>
+        <td>${fmt(score.leftEye?.spvDegPerSec)}</td>
+        <td>${fmt(score.leftEye?.beatsPer30Sec, 0)}</td>
+        <td>${qualityBadgeHtml(score.validity?.qualityGrade)}</td>
       </tr>`;
     }).join('');
 
@@ -106,7 +94,6 @@ export const VngBatteryReport: React.FC<{ hi: boolean; sessions: GazeSession[] }
       const score = session?.vngScore as SmoothPursuitVNGScore | undefined;
       const sessionGazes: GazePoint[] = (session as any)?.gazeSeries || (session as any)?.telemetry || [];
 
-      // No data at all — show placeholder dashes
       if (!score && sessionGazes.length === 0) {
         return `<tr>
           <td style="text-align:left; font-weight:600;">${sec.en}</td>
@@ -115,13 +102,9 @@ export const VngBatteryReport: React.FC<{ hi: boolean; sessions: GazeSession[] }
         </tr>`;
       }
 
-      // Prefer the stored vngScore (computed by scoreSmoothPursuitVNG at record-time)
       if (score) {
-        // Derive direction-specific cycle gains from the 0.1 Hz Fourier fit
         const freqGain01 = score.frequencyGains?.find(f => Math.abs(f.frequencyHz - 0.1) < 0.05);
         const rawGainPct = Math.round(Math.min(Math.max((freqGain01?.gain ?? score.velocityGain ?? 0) * 100, 0), 105));
-        // Phase lag splits leftward/rightward by a few percent — absent explicit per-direction data
-        // use rawGainPct for both (both are derived from the same signal)
         const lPct = `${rawGainPct}%`;
         const rPct = `${rawGainPct}%`;
         const qualityGrade = score.qualityLabel ?? score.validity?.qualityGrade ?? 'impaired';
@@ -135,13 +118,11 @@ export const VngBatteryReport: React.FC<{ hi: boolean; sessions: GazeSession[] }
         </tr>`;
       }
 
-      // Fallback: no vngScore but raw gaze present — compute from raw stream
-      // (targets are not stored, so we can only get an approximate gain)
-      const rawGains = sessionGazes.length > 0
-        ? computeHospitalPursuitGains(sessionGazes as any, sessionGazes)
+      const rawGains = sessionGazes.length >= 5
+        ? computeHospitalPursuitGains(sessionGazes as any, [])
         : null;
-      const rEye = rawGains?.freq01Hz.rightEye;
-      const lEye = rawGains?.freq01Hz.leftEye;
+      const rEye = rawGains?.freq01Hz?.rightEye;
+      const lEye = rawGains?.freq01Hz?.leftEye;
       return `<tr>
         <td style="text-align:left; font-weight:600;">${sec.en}</td>
         <td>${rEye ? `${rEye.leftwardGainPct}%` : '—'}</td>
@@ -152,124 +133,60 @@ export const VngBatteryReport: React.FC<{ hi: boolean; sessions: GazeSession[] }
       </tr>`;
     }).join('');
 
-    const saccadeReport = computeHospitalSaccadeReport([], [], []);
-    const saccadeRows = `
-      <tr>
-        <td style="text-align:left; font-weight:600;">Left Cycle Right Eye (OD)</td>
-        <td>${saccadeReport.leftCycleRightEye.targetMovement}</td>
-        <td>${saccadeReport.leftCycleRightEye.acceptedSaccades}</td>
-        <td>${saccadeReport.leftCycleRightEye.latencyMs} ms</td>
-        <td>${saccadeReport.leftCycleRightEye.velocityDegPerSec} deg/s</td>
-        <td>${saccadeReport.leftCycleRightEye.precisionPct}%</td>
-        <td>${qualityBadgeHtml('excellent')}</td>
-      </tr>
-      <tr>
-        <td style="text-align:left; font-weight:600;">Left Cycle Left Eye (OS)</td>
-        <td>${saccadeReport.leftCycleLeftEye.targetMovement}</td>
-        <td>${saccadeReport.leftCycleLeftEye.acceptedSaccades}</td>
-        <td>${saccadeReport.leftCycleLeftEye.latencyMs} ms</td>
-        <td>${saccadeReport.leftCycleLeftEye.velocityDegPerSec} deg/s</td>
-        <td>${saccadeReport.leftCycleLeftEye.precisionPct}%</td>
-        <td>${qualityBadgeHtml('excellent')}</td>
-      </tr>
-      <tr>
-        <td style="text-align:left; font-weight:600;">Right Cycle Right Eye (OD)</td>
-        <td>${saccadeReport.rightCycleRightEye.targetMovement}</td>
-        <td>${saccadeReport.rightCycleRightEye.acceptedSaccades}</td>
-        <td>${saccadeReport.rightCycleRightEye.latencyMs} ms</td>
-        <td>${saccadeReport.rightCycleRightEye.velocityDegPerSec} deg/s</td>
-        <td>${saccadeReport.rightCycleRightEye.precisionPct}%</td>
-        <td>${qualityBadgeHtml('excellent')}</td>
-      </tr>
-      <tr>
-        <td style="text-align:left; font-weight:600;">Right Cycle Left Eye (OS)</td>
-        <td>${saccadeReport.rightCycleLeftEye.targetMovement}</td>
-        <td>${saccadeReport.rightCycleLeftEye.acceptedSaccades}</td>
-        <td>${saccadeReport.rightCycleLeftEye.latencyMs} ms</td>
-        <td>${saccadeReport.rightCycleLeftEye.velocityDegPerSec} deg/s</td>
-        <td>${saccadeReport.rightCycleLeftEye.precisionPct}%</td>
-        <td>${qualityBadgeHtml('excellent')}</td>
-      </tr>
-    `;
-
-    const vhitReport = scoreVhitBattery();
-    const vhitRows = `
-      <tr>
-        <td style="text-align:left; font-weight:600;">Lateral Semicircular Canal</td>
-        <td>${vhitReport.lateralLeft.vorGain.toFixed(2)}</td>
-        <td>${vhitReport.lateralRight.vorGain.toFixed(2)}</td>
-        <td>${vhitReport.lateralLeft.saccadeStatus}</td>
-        <td>${vhitReport.lateralRight.saccadeStatus}</td>
-        <td>${qualityBadgeHtml('excellent')}</td>
-      </tr>
-      <tr>
-        <td style="text-align:left; font-weight:600;">Posterior Semicircular Canal</td>
-        <td>${vhitReport.posteriorLeft.vorGain.toFixed(2)}</td>
-        <td>${vhitReport.posteriorRight.vorGain.toFixed(2)}</td>
-        <td>${vhitReport.posteriorLeft.saccadeStatus}</td>
-        <td>${vhitReport.posteriorRight.saccadeStatus}</td>
-        <td>${qualityBadgeHtml('excellent')}</td>
-      </tr>
-      <tr>
-        <td style="text-align:left; font-weight:600;">Anterior Semicircular Canal</td>
-        <td>${vhitReport.anteriorLeft.vorGain.toFixed(2)}</td>
-        <td>${vhitReport.anteriorRight.vorGain.toFixed(2)}</td>
-        <td>${vhitReport.anteriorLeft.saccadeStatus}</td>
-        <td>${vhitReport.anteriorRight.saccadeStatus}</td>
-        <td>${qualityBadgeHtml('excellent')}</td>
-      </tr>
-    `;
-
     const reportHtml = `
       <!DOCTYPE html>
       <html>
         <head>
-          <title>Hospital-Grade VNG &amp; vHIT Diagnostic Report - ${patient.name}</title>
+          <title>Vestibular Rehabilitation Performance Report - ${patient.name}</title>
           <style>
             body { font-family: 'Segoe UI', Arial, sans-serif; padding: 25px; color: #0f172a; line-height: 1.4; background: #ffffff; }
             .header { border-bottom: 3px solid #1e1b4b; padding-bottom: 10px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: flex-end; }
-            .title { font-size: 22px; font-weight: 800; color: #1e1b4b; text-transform: uppercase; tracking: 0.5px; }
+            .title { font-size: 20px; font-weight: 800; color: #1e1b4b; text-transform: uppercase; letter-spacing: 0.5px; }
             .subtitle { font-size: 12px; color: #4338ca; font-weight: 600; }
+            .notice-box { background: #fef2f2; border: 1.5px solid #fca5a5; border-radius: 6px; padding: 8px 12px; font-size: 11px; color: #991b1b; margin-bottom: 16px; font-weight: 600; }
             .patient-box { background: #f8fafc; border: 1.5px solid #cbd5e1; border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; font-size: 13px; display: grid; grid-template-cols: 1fr 1fr 1fr 1fr; gap: 10px; }
             table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 11.5px; }
             th, td { border: 1px solid #cbd5e1; padding: 6px 8px; text-align: center; }
             th { background: #f1f5f9; font-weight: 700; color: #1e293b; text-transform: uppercase; font-size: 10.5px; }
             .section { margin-top: 16px; page-break-inside: avoid; }
             .section-header { font-size: 13px; font-weight: 800; color: #1e1b4b; border-bottom: 2px solid #6366f1; padding-bottom: 4px; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
-            .footer { margin-top: 30px; border-top: 1.5px solid #cbd5e1; padding-top: 12px; font-size: 11px; color: #64748b; }
-            .sig-box { margin-top: 30px; display: flex; justify-content: space-between; font-size: 12px; font-weight: 600; }
+            .footer { margin-top: 24px; border-top: 1.5px solid #cbd5e1; padding-top: 10px; font-size: 10.5px; color: #64748b; text-align: center; }
           </style>
         </head>
         <body>
           <div class="header">
             <div>
-              <div class="title">Hospital Vestibular Diagnostic Lab</div>
-              <div class="subtitle">AI-Accelerated VNG &amp; Video Head Impulse (vHIT) Analytics Battery</div>
+              <div class="title">Vestibular Rehabilitation Performance Report</div>
+              <div class="subtitle">AI-Accelerated Eye Movement &amp; Rehabilitation Analytics Battery</div>
             </div>
             <div style="text-align:right; font-size:11px; color:#475569;">
               <strong>Date:</strong> ${new Date().toLocaleDateString('en-IN')}<br/>
-              <strong>Ref ID:</strong> ${patient.mrn}
+              <strong>Status:</strong> ${recordedCount}/${ALL_SECTIONS.length} Battery Modules Recorded
             </div>
           </div>
 
-          <div class="patient-box">
-            <div><strong>Patient Name:</strong> ${patient.name}</div>
-            <div><strong>Patient ID:</strong> ${patient.mrn}</div>
-            <div><strong>Gender / Age:</strong> ${patient.gender} / ${patient.age} yrs</div>
-            <div><strong>Device:</strong> MacBook Air M4 Chrome</div>
+          <div class="notice-box">
+            ⚠️ <strong>CLINICAL NOTICE:</strong> This report is for screening, rehabilitation progress monitoring, and exercise adherence tracking only. It is NOT a clinical diagnostic test and does NOT replace hospital Videonystagmography (VNG), vHIT, or specialist neuro-otological examination.
           </div>
 
-          <!-- Section 1: Spontaneous & Gaze Nystagmus -->
+          <div class="patient-box">
+            <div><strong>Patient:</strong> ${patient.name}</div>
+            <div><strong>MRN / HPR:</strong> ${patient.mrn}</div>
+            <div><strong>Age / Gender:</strong> ${patient.age} / ${patient.gender}</div>
+            <div><strong>Facility:</strong> Command Hospital (SC) Pune</div>
+          </div>
+
+          <!-- Section 1: Nystagmus Battery -->
           <div class="section">
-            <div class="section-header">1. Spontaneous &amp; Gaze-Induced Nystagmus (SPV °/sec)</div>
+            <div class="section-header">1. Oculomotor &amp; Nystagmus Analysis (Fixation-Present)</div>
             <table>
               <thead>
                 <tr>
-                  <th>Nystagmus Direction / Position</th>
-                  <th>Right Eye SPV (°/sec)</th>
-                  <th>Right Eye Beats / 30 sec</th>
-                  <th>Left Eye SPV (°/sec)</th>
-                  <th>Left Eye Beats / 30 sec</th>
+                  <th>Position / Condition</th>
+                  <th>Right Eye SPV (°/s)</th>
+                  <th>Right Beats / 30s</th>
+                  <th>Left Eye SPV (°/s)</th>
+                  <th>Left Beats / 30s</th>
                   <th>Signal Quality</th>
                 </tr>
               </thead>
@@ -277,104 +194,26 @@ export const VngBatteryReport: React.FC<{ hi: boolean; sessions: GazeSession[] }
             </table>
           </div>
 
-          <!-- Section 2: Smooth Pursuit 0.1Hz / 0.2Hz -->
+          <!-- Section 2: Smooth Pursuit Gain -->
           <div class="section">
-            <div class="section-header">2. Smooth Pursuit Analysis (0.1 Hz &amp; 0.2 Hz Gains)</div>
+            <div class="section-header">2. Smooth Pursuit Gain &amp; Symmetry Analysis</div>
             <table>
               <thead>
                 <tr>
-                  <th>Test Stimulus</th>
-                  <th>Right Eye Gain Left Cycle (%)</th>
-                  <th>Right Eye Gain Right Cycle (%)</th>
-                  <th>Left Eye Gain Left Cycle (%)</th>
-                  <th>Left Eye Gain Right Cycle (%)</th>
-                  <th>Signal Quality</th>
+                  <th>Pursuit Test Module</th>
+                  <th>Right Eye Leftward Gain</th>
+                  <th>Right Eye Rightward Gain</th>
+                  <th>Left Eye Leftward Gain</th>
+                  <th>Left Eye Rightward Gain</th>
+                  <th>Tracking Grade</th>
                 </tr>
               </thead>
               <tbody>${pursuitRows}</tbody>
             </table>
           </div>
 
-          <!-- Section 3: Fixed & Random Saccade Main Sequence -->
-          <div class="section">
-            <div class="section-header">3. Saccadic Main Sequence Analysis</div>
-            <table>
-              <thead>
-                <tr>
-                  <th>Saccade Test Cycle</th>
-                  <th>Target Movement</th>
-                  <th>Accepted Saccades</th>
-                  <th>Latency (ms)</th>
-                  <th>Peak Velocity (°/sec)</th>
-                  <th>Precision (%)</th>
-                  <th>Signal Quality</th>
-                </tr>
-              </thead>
-              <tbody>${saccadeRows}</tbody>
-            </table>
-          </div>
-
-          <!-- Section 4: 6-Canal vHIT (Video Head Impulse Test) -->
-          <div class="section">
-            <div class="section-header">4. Video Head Impulse Test (vHIT) — 6 Semicircular Canals VOR Gain</div>
-            <table>
-              <thead>
-                <tr>
-                  <th>Semicircular Canal Pairs</th>
-                  <th>Left VOR Gain (0-500ms)</th>
-                  <th>Right VOR Gain (0-500ms)</th>
-                  <th>Left Saccade Analysis</th>
-                  <th>Right Saccade Analysis</th>
-                  <th>Canal Integrity</th>
-                </tr>
-              </thead>
-              <tbody>${vhitRows}</tbody>
-            </table>
-          </div>
-
-          <!-- Section 5: Caloric & cVEMP Integration -->
-          ${
-            includeCaloricCvemp
-              ? `
-          <div class="section">
-            <div class="section-header">5. Integrated Caloric &amp; cVEMP Diagnostic Summary</div>
-            <table>
-              <thead>
-                <tr>
-                  <th>Test Module</th>
-                  <th>Right Side Metric</th>
-                  <th>Left Side Metric</th>
-                  <th>Asymmetry / Paresis (%)</th>
-                  <th>Diagnostic Impression</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td style="text-align:left; font-weight:600;">Bithermal Caloric Test</td>
-                  <td>Warm 44°C SPV: 24 deg/s</td>
-                  <td>Cold 30°C SPV: 22 deg/s</td>
-                  <td><strong>Canal Paresis: 8% (Normal)</strong></td>
-                  <td>Normal Symmetrical Caloric Response</td>
-                </tr>
-                <tr>
-                  <td style="text-align:left; font-weight:600;">Cervical VEMP (cVEMP)</td>
-                  <td>P1: 11.4 ms \| N1: 20.0 ms</td>
-                  <td>P1: 12.2 ms \| N1: 21.2 ms</td>
-                  <td><strong>Asymmetry Ratio: 0.03</strong></td>
-                  <td>Intact Saccule &amp; Inferior Vestibular Nerve</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>`
-              : ''
-          }
-
           <div class="footer">
-            <div>Validated by i-Dhanwantari High-Precision Oculomotor Analytics Engine &middot; MacBook Air M4 WebGPU Vision Pipeline</div>
-            <div class="sig-box">
-              <div>Examining Neuro-Otologist / Audiologist: __________________________</div>
-              <div>Signature &amp; Stamp: ______________________</div>
-            </div>
+            Generated by i-Dhanwantari Vestibular Rehabilitation Engine &middot; For clinical progress tracking only.
           </div>
           <script>window.print();</script>
         </body>
@@ -387,23 +226,39 @@ export const VngBatteryReport: React.FC<{ hi: boolean; sessions: GazeSession[] }
 
   return (
     <div className="space-y-6">
+      {/* Mandatory Clinical Disclaimer Banner */}
+      <div className="flex items-start gap-3 p-4 bg-amber-950/40 border border-amber-800/60 rounded-xl text-amber-200 text-xs">
+        <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+        <div className="space-y-1">
+          <p className="font-bold text-amber-300">
+            {hi ? 'नैदानिक अस्वीकरण (Clinical Disclaimer)' : 'Clinical Screening & Progress Monitoring Notice'}
+          </p>
+          <p className="text-amber-200/90 leading-relaxed">
+            {hi
+              ? 'यह रिपोर्ट केवल पुनर्वास प्रगति ट्रैकिंग और व्यायाम अनुपालन निगरानी के लिए है। यह अस्पताल VNG, vHIT, या नैदानिक न्यूरो-ऑटोलॉजिकल परीक्षा का स्थान नहीं लेती है।'
+              : 'This module is designed for rehabilitation progress monitoring, screening, and exercise adherence tracking. It is NOT a clinical diagnostic tool and does NOT replace hospital-grade VNG, vHIT, or specialist neuro-otological examination.'}
+          </p>
+        </div>
+      </div>
+
       <div className="bg-[#0b0f19] p-5 sm:p-6 rounded-2xl border border-white/10 space-y-5">
         <div className="flex items-center justify-between flex-wrap gap-4 border-b border-white/10 pb-4">
           <div>
             <h2 className="text-base font-bold text-white flex items-center gap-2">
               <FileText className="w-5 h-5 text-indigo-400" />
-              {hi ? 'अस्पताल-स्तरीय VNG व vHIT डायग्नोस्टिक रिपोर्ट' : 'Hospital-Grade VNG & vHIT Diagnostic Report'}
+              {hi ? 'वेस्टिबुलर पुनर्वास प्रदर्शन रिपोर्ट' : 'Vestibular Rehab Performance Report'}
             </h2>
             <p className="text-xs text-slate-400 mt-1">
               {hi
-                ? `80 लाख के हॉस्पिटल VNG/vHIT गोल्ड स्टैंडर्ड प्रारूप के अनुसार पैरामीटर निष्कर्षण।`
-                : `Matched to ₹80 Lakh Hospital VNG/vHIT lab gold-standard parameter extraction (Dipti G & PC Rout formats).`}
+                ? `ऑकुलर मोटर गति, स्मूथ परस्यूट और निस्टागमस स्थिरता संकेतक।`
+                : `Oculomotor motion tracking, smooth pursuit gain index, and fixation stability telemetry.`}
             </p>
           </div>
+
           <div className="flex items-center gap-3">
             <button
               onClick={handlePrintReport}
-              className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center gap-2 shadow-lg shadow-indigo-900/40 transition-all cursor-pointer"
+              className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-semibold text-xs transition shadow-lg shadow-indigo-600/30"
             >
               <Printer className="w-4 h-4" />
               {hi ? 'अस्पताल रिपोर्ट प्रिंट करें (PDF)' : 'Print Hospital VNG Report (PDF)'}

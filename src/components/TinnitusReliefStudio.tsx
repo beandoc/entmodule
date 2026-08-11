@@ -27,6 +27,7 @@ const OCTAVE_ANCHORS = [250, 500, 1000, 2000, 4000, 6000, 8000, 10000, 12000];
 const SESSION_PRESETS = [15, 30, 60, 120];
 
 const ENGINE_TO_MODE: Record<RxEngine, Exclude<EngineMode, 'idle' | 'pitch'>> = {
+  TONE: 'tone',
   ACRN: 'acrn',
   NOTCH: 'notched',
   BROAD: 'broadband',
@@ -978,6 +979,7 @@ export const TinnitusReliefStudio: React.FC = () => {
               </h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                 {([
+                  { id: 'TONE' as RxEngine, name: hi ? 'एकल शुद्ध टोन' : 'Pure Tone Masker', desc: hi ? 'आपकी सटीक टिनिटस आवृत्ति पर निरंतर एकल टोन' : 'Continuous single tone matching your exact tinnitus pitch' },
                   { id: 'ACRN' as RxEngine, name: hi ? 'ACRN 4-टोन' : 'ACRN 4-tone', desc: hi ? 'आपकी पिच के चारों ओर चार टोन' : 'Four tones bracketing your pitch' },
                   { id: 'NOTCH' as RxEngine, name: hi ? 'नॉच्ड शोर' : 'Notched noise', desc: hi ? 'आपकी आवृत्ति पर कटा हुआ शोर' : 'Noise with your frequency filtered out' },
                   { id: 'BROAD' as RxEngine, name: hi ? 'ब्रॉडबैंड मास्कर' : 'Broadband masker', desc: hi ? 'सादा शोर जो टिनिटस को ढकता है' : 'Plain noise that covers the tinnitus' },
@@ -1003,6 +1005,24 @@ export const TinnitusReliefStudio: React.FC = () => {
                   );
                 })}
               </div>
+
+              {engineChoice === 'TONE' && (
+                <div className="rounded-xl bg-slate-50 dark:bg-ink-950 border border-slate-200 dark:border-ink-800 p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
+                      {hi ? 'सक्रिय शुद्ध टोन आवृत्ति' : 'Active Pure Tone Frequency'}
+                    </span>
+                    <span className="font-mono text-sm font-bold text-navy-700 dark:text-navy-300">
+                      {frequency} Hz
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+                    {hi
+                      ? 'निरंतर शुद्ध टोन आपकी सटीक टिनिटस आवृत्ति पर बजता है। वॉल्यूम लेवल को ऐसा रखें कि वह आपकी टिनिटस आवाज़ के ठीक नीचे रहे।'
+                      : 'Plays a continuous pure tone at your matched pitch. Adjust the level slider below so it stays just below your tinnitus pitch.'}
+                  </p>
+                </div>
+              )}
 
               {engineChoice === 'ACRN' && (
                 <div className="rounded-xl bg-slate-50 dark:bg-ink-950 border border-slate-200 dark:border-ink-800 p-4 space-y-3">

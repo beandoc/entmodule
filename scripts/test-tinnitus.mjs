@@ -118,7 +118,7 @@ console.log(`   [PASS] ${code} round-trips exactly & direct frequency inputs (80
 
 // Every engine must survive the badge -> clipboard -> retype path. BINAURAL and SOUNDSCAPE were
 // encodable but not decodable before, so the code shown in the hero could not be entered back.
-for (const engine of ['ACRN', 'NOTCH', 'BROAD', 'BINAURAL', 'SOUNDSCAPE']) {
+for (const engine of ['TONE', 'ACRN', 'NOTCH', 'BROAD', 'BINAURAL', 'SOUNDSCAPE']) {
   const original = { fT: 8000, levelDb: -45, engine, loopRepeat: 3, restLength: 8 };
   const encoded = encodeRx(original);
   assert.ok(

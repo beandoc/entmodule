@@ -284,7 +284,7 @@ console.log(`   [PASS] motion at an unrelated frequency shows weak agreement (${
 // Catch-up saccades are only those moving TOWARD the target. Build a gaze that
 // makes one corrective saccade toward a target parked on the right, then one
 // away from it — only the first is a catch-up.
-const parked = Array.from({ length: 66 }, (_, i) => ({
+const parked = Array.from({ length: 200 }, (_, i) => ({
   x: 0.8, y: 0.5, t: (i * 1000) / 60, mode: 'horizontal',
 }));
 const correcting = [
@@ -292,7 +292,7 @@ const correcting = [
   ...series(3, 60, (i) => ({ x: 0.30 + (i + 1) * 0.1, y: 0.5 }), (20 * 1000) / 60), // jump right, toward target
   ...series(20, 60, () => ({ x: 0.60, y: 0.5 }), (23 * 1000) / 60),               // hold
   ...series(3, 60, (i) => ({ x: 0.60 - (i + 1) * 0.083, y: 0.5 }), (43 * 1000) / 60), // jump left, away
-  ...series(20, 60, () => ({ x: 0.35, y: 0.5 }), (46 * 1000) / 60),               // hold
+  ...series(154, 60, () => ({ x: 0.35, y: 0.5 }), (46 * 1000) / 60),              // hold rest of 3.3s window
 ];
 const correctingSaccades = detectSaccades(correcting);
 assert.equal(correctingSaccades.length, 2, `the fixture must contain two saccades, got ${correctingSaccades.length}`);

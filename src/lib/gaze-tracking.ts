@@ -419,13 +419,16 @@ export function extractGazeFromLandmarks(
   // We gate compensation to |head_velocity| < 40°/s to avoid corrupting VOR-x2 exercises
   // where intentional head motion IS the signal.
   if (headPose) {
-    const yawRad   = (headPose.yaw * Math.PI) / 180;
-    const pitchRad = (headPose.pitch * Math.PI) / 180;
-    // sin-based (not linear) so compensation is accurate up to ~30° off-axis
-    const yawComp   = Math.sin(yawRad)   * 0.30;
-    const pitchComp = Math.sin(pitchRad) * 0.30;
-    deltaX -= yawComp;
-    deltaY += pitchComp;
+    const headVel = Math.hypot(headPose.yawVelocity ?? 0, headPose.pitchVelocity ?? 0);
+    // Gate compensation when head is stationary/slow (< 40°/s) to avoid corrupting VOR exercises
+    if (headVel < 40) {
+      const yawRad   = (headPose.yaw * Math.PI) / 180;
+      const pitchRad = (headPose.pitch * Math.PI) / 180;
+      const yawComp   = Math.sin(yawRad)   * 0.30;
+      const pitchComp = Math.sin(pitchRad) * 0.30;
+      deltaX -= yawComp;
+      deltaY += pitchComp;
+    }
   }
 
 
@@ -442,13 +445,17 @@ export function extractGazeFromLandmarks(
   const gazeX = Math.min(Math.max(0.5 + deltaX * GAZE_GAIN_X, 0.02), 0.98);
   const gazeY = Math.min(Math.max(0.5 + deltaY * GAZE_GAIN_Y, 0.02), 0.98);
 
-  // Conjugate Left vs Right eye position tracking (centered at 0.5 ~ 0° Center)
-  // Both eyes track relative to the combined gaze displacement deltaX / deltaY
-  const lGazeX = gazeX;
-  const rGazeX = gazeX;
-  const lGazeY = gazeY;
-  const rGazeY = gazeY;
-  const eyeDisagreement = Math.abs(lGazeX - rGazeX);
+  // Per-eye position tracking derived from monocular iris offsets
+  const lDeltaX = lOffsetX - zeroX;
+  const rDeltaX = rOffsetX - zeroX;
+  const lDeltaY = lOffsetY - zeroY;
+  const rDeltaY = rOffsetY - zeroY;
+
+  const lGazeX = Math.min(Math.max(0.5 + lDeltaX * GAZE_GAIN_X, 0.02), 0.98);
+  const rGazeX = Math.min(Math.max(0.5 + rDeltaX * GAZE_GAIN_X, 0.02), 0.98);
+  const lGazeY = Math.min(Math.max(0.5 + lDeltaY * GAZE_GAIN_Y, 0.02), 0.98);
+  const rGazeY = Math.min(Math.max(0.5 + rDeltaY * GAZE_GAIN_Y, 0.02), 0.98);
+  const eyeDisagreement = Math.hypot(lGazeX - rGazeX, lGazeY - rGazeY);
 
   // Confidence calculation
   let confidence = 0.95;

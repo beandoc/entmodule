@@ -17,7 +17,7 @@
 export type NoiseColor = 'white' | 'pink' | 'brown';
 export type SoundscapePreset = 'none' | 'ocean' | 'rain' | 'stream';
 export type BinauralPreset = 'none' | 'delta' | 'theta' | 'alpha' | 'beta';
-export type EngineMode = 'idle' | 'pitch' | 'acrn' | 'notched' | 'broadband' | 'binaural' | 'soundscape';
+export type EngineMode = 'idle' | 'pitch' | 'tone' | 'acrn' | 'notched' | 'broadband' | 'binaural' | 'soundscape';
 
 export interface BinauralConfig {
   name: string;
@@ -380,7 +380,7 @@ export class TinnitusEngine {
     }
 
     this.mode = mode;
-    if (mode === 'pitch') {
+    if (mode === 'pitch' || mode === 'tone') {
       this.startOscillator();
     } else if (mode === 'notched' || mode === 'broadband') {
       this.startNoise(mode === 'notched');

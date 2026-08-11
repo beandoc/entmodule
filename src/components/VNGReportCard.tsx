@@ -135,7 +135,7 @@ export const VNGReportCard: React.FC<VNGReportCardProps> = ({
                 ? `${calibrationReport.maeDeg}°`
                 : activeValidity.metrics.calibrationMaeDeg !== undefined
                 ? `${activeValidity.metrics.calibrationMaeDeg}°`
-                : '3.0° (est)'}
+                : (locale === 'hi' ? 'मापा नहीं गया' : 'Not Measured')}
             </span>
           </div>
         </div>

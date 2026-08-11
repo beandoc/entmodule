@@ -283,8 +283,7 @@ export function scoreSmoothPursuitVNG(
   const validity = evaluateGazeValidity(gazes, undefined, undefined, { mode: 'smooth_pursuit' });
   const binocular = evaluateBinocularAnalytics(gazes, degPerUnit);
 
-  const isRealMediaPipeData = gazes.some(g => 'irisAvailability' in g || 'effectiveFps' in g || 'calibrationError' in g);
-  if ((isRealMediaPipeData && !validity.isScoreable) || targets.length < 5 || gazes.length < 5) {
+  if (!validity.isScoreable || targets.length < 5 || gazes.length < 5) {
     return {
       velocityGain: 0,
       directionalAgreement: 0,
@@ -306,7 +305,6 @@ export function scoreSmoothPursuitVNG(
       slipLevel: 'high',
       timingLabel: 'delayed',
     };
-
   }
 
   // 1D: Interpolate blink / dropout gaps ≤ 300ms before alignment so velocity
@@ -1080,11 +1078,12 @@ function fitSinusoidalGainAtFrequency(
     sinGaze += acGaze * s;
   }
 
-  const ampTgt = Math.sqrt(cosTgt * cosTgt + sinTgt * sinTgt);
-  const ampGaze = Math.sqrt(cosGaze * cosGaze + sinGaze * sinGaze);
+  const N = Math.max(validPairs.length, 1);
+  const ampTgt = (Math.sqrt(cosTgt * cosTgt + sinTgt * sinTgt) * 2) / N;
+  const ampGaze = (Math.sqrt(cosGaze * cosGaze + sinGaze * sinGaze) * 2) / N;
 
   // If the target stimulus was not driven at this off-frequency, report 0 gain & 0 lag
-  if (ampTgt < 0.03) {
+  if (ampTgt < 0.01) {
     return { frequencyHz: freqHz, gain: 0, phaseLagDeg: 0, harmonicDistortionPct: 0 };
   }
 
@@ -1224,8 +1223,8 @@ export function computeHospitalPursuitGains(
       }
     }
 
-    const rawLeft = leftTgtSq > 1e-6 ? Math.min(Math.max((leftDot / leftTgtSq) * 100, 0), 105) : (eye === 'right' ? 94 : 95);
-    const rawRight = rightTgtSq > 1e-6 ? Math.min(Math.max((rightDot / rightTgtSq) * 100, 0), 105) : (eye === 'right' ? 98 : 97);
+    const rawLeft = leftTgtSq > 1e-6 ? Math.min(Math.max((leftDot / leftTgtSq) * 100, 0), 105) : 0;
+    const rawRight = rightTgtSq > 1e-6 ? Math.min(Math.max((rightDot / rightTgtSq) * 100, 0), 105) : 0;
 
     const scaleFreq = freq === 0.1 ? 1.0 : 0.96;
     return {
@@ -1296,27 +1295,23 @@ export function computeHospitalSaccadeReport(
     const velocityDegPerSec = Math.round(matching.peakVelocityDeg);
 
     points.push({ amplitudeDeg: Math.round(ampDeg), latencyMs, velocityDegPerSec, precisionPct, eye: 'OD' });
-    points.push({ amplitudeDeg: Math.round(ampDeg), latencyMs: Math.round(latencyMs + (Math.random() * 12 - 6)), velocityDegPerSec: Math.round(velocityDegPerSec * 0.98), precisionPct, eye: 'OS' });
+    points.push({ amplitudeDeg: Math.round(ampDeg), latencyMs, velocityDegPerSec, precisionPct, eye: 'OS' });
   }
 
-  const defaultChannel = (lat: number, vel: number, prec: number): SaccadeChannelMetrics => ({
-    targetMovement: 9,
-    acceptedSaccades: 9,
-    latencyMs: lat,
-    velocityDegPerSec: vel,
-    precisionPct: prec,
+  const emptyChannel = (): SaccadeChannelMetrics => ({
+    targetMovement: 0,
+    acceptedSaccades: 0,
+    latencyMs: 0,
+    velocityDegPerSec: 0,
+    precisionPct: 0,
   });
 
   return {
-    leftCycleRightEye: defaultChannel(249, 527, 102),
-    leftCycleLeftEye: defaultChannel(302, 791, 96),
-    rightCycleRightEye: defaultChannel(303, 479, 101),
-    rightCycleLeftEye: defaultChannel(308, 648, 96),
-    points: points.length > 0 ? points : [
-      { amplitudeDeg: 10, latencyMs: 240, velocityDegPerSec: 450, precisionPct: 98, eye: 'OD' },
-      { amplitudeDeg: 20, latencyMs: 280, velocityDegPerSec: 620, precisionPct: 100, eye: 'OD' },
-      { amplitudeDeg: 30, latencyMs: 305, velocityDegPerSec: 780, precisionPct: 96, eye: 'OS' },
-    ],
+    leftCycleRightEye: emptyChannel(),
+    leftCycleLeftEye: emptyChannel(),
+    rightCycleRightEye: emptyChannel(),
+    rightCycleLeftEye: emptyChannel(),
+    points,
   };
 }
 
@@ -1343,13 +1338,12 @@ export function scoreVhitBattery(
   headSeries: HeadPoint[] = [],
   gazes: GazePoint[] = []
 ): VhitBatteryReport {
-  // Evaluates head impulses (> 120 deg/s) vs eye velocities
-  let lateralLeftGain = 1.11;
-  let lateralRightGain = 1.51;
-  let posteriorLeftGain = 1.08;
-  let posteriorRightGain = 0.87;
-  let anteriorLeftGain = 1.17;
-  let anteriorRightGain = 1.14;
+  let lateralLeftGain = 0;
+  let lateralRightGain = 0;
+  let posteriorLeftGain = 0;
+  let posteriorRightGain = 0;
+  let anteriorLeftGain = 0;
+  let anteriorRightGain = 0;
 
   if (headSeries.length >= 10 && gazes.length >= 10) {
     const gains: number[] = [];
@@ -1368,16 +1362,16 @@ export function scoreVhitBattery(
     }
     if (gains.length > 0) {
       const avgGain = median(gains);
-      lateralLeftGain = parseFloat(Math.min(Math.max(avgGain, 0.6), 1.6).toFixed(2));
-      lateralRightGain = parseFloat(Math.min(Math.max(avgGain * 1.05, 0.6), 1.6).toFixed(2));
+      lateralLeftGain = parseFloat(Math.min(Math.max(avgGain, 0.0), 1.6).toFixed(2));
+      lateralRightGain = parseFloat(Math.min(Math.max(avgGain, 0.0), 1.6).toFixed(2));
     }
   }
 
   const makeCanal = (gain: number): VhitCanalMetrics => ({
     vorGain: gain,
-    covertSaccadeCount: gain < 0.80 ? 2 : 0,
-    overtSaccadeCount: gain < 0.70 ? 1 : 0,
-    saccadeStatus: gain < 0.80 ? 'Covert Saccade' : 'No Saccade',
+    covertSaccadeCount: gain > 0 && gain < 0.80 ? 2 : 0,
+    overtSaccadeCount: gain > 0 && gain < 0.70 ? 1 : 0,
+    saccadeStatus: gain > 0 && gain < 0.80 ? 'Covert Saccade' : 'No Saccade',
   });
 
   return {
@@ -1387,7 +1381,7 @@ export function scoreVhitBattery(
     posteriorRight: makeCanal(posteriorRightGain),
     anteriorLeft: makeCanal(anteriorLeftGain),
     anteriorRight: makeCanal(anteriorRightGain),
-    validityGrade: 'excellent',
+    validityGrade: (headSeries.length >= 10 && gazes.length >= 10) ? 'good' : 'fair',
   };
 }
 

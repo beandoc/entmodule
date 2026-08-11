@@ -26,6 +26,19 @@ export const DEFAULT_DISPLAY_GEOMETRY: DisplayGeometry = {
   screenHeightPx: 1080,
 };
 
+export function getDefaultDisplayGeometry(): DisplayGeometry {
+  if (typeof window !== 'undefined' && (window.innerWidth < 768 || /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent))) {
+    return {
+      viewingDistanceCm: 35,
+      screenWidthMm: 70,
+      screenHeightMm: 150,
+      screenWidthPx: window.innerWidth || 390,
+      screenHeightPx: window.innerHeight || 844,
+    };
+  }
+  return DEFAULT_DISPLAY_GEOMETRY;
+}
+
 export interface Point2D {
   x: number;
   y: number;
@@ -59,7 +72,7 @@ export interface CalibrationReport {
 export function normalizedToVisualAngleDeg(
   normDx: number,
   normDy: number,
-  geometry: DisplayGeometry = DEFAULT_DISPLAY_GEOMETRY
+  geometry: DisplayGeometry = getDefaultDisplayGeometry()
 ): number {
   const dxMm = Math.abs(normDx) * geometry.screenWidthMm;
   const dyMm = Math.abs(normDy) * geometry.screenHeightMm;
@@ -74,7 +87,7 @@ export function normalizedToVisualAngleDeg(
 /**
  * Computes effective DEG_PER_UNIT constant for 1.0 unit of normalized screen diagonal distance.
  */
-export function computeEffectiveDegPerUnit(geometry: DisplayGeometry = DEFAULT_DISPLAY_GEOMETRY): number {
+export function computeEffectiveDegPerUnit(geometry: DisplayGeometry = getDefaultDisplayGeometry()): number {
   return normalizedToVisualAngleDeg(1.0, 0, geometry);
 }
 
@@ -83,7 +96,7 @@ export function computeEffectiveDegPerUnit(geometry: DisplayGeometry = DEFAULT_D
  */
 export function evaluateCalibrationQuality(
   samples: Array<{ target: Point2D; measuredGaze: Point2D }>,
-  geometry: DisplayGeometry = DEFAULT_DISPLAY_GEOMETRY
+  geometry: DisplayGeometry = getDefaultDisplayGeometry()
 ): CalibrationReport {
   if (!samples || samples.length === 0) {
     return {

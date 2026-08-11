@@ -36,7 +36,7 @@ import {
 import { getCurrentPatientId } from '@/lib/patient-context';
 import {
   Tab, CameraState, LiveData, SessionData, EMPTY_LIVE, EMPTY_SESSION, HUD_SYNC_INTERVAL_MS, VOR_COLOUR,
-  drawGazeOverlay, drawSearching,
+  drawGazeOverlay, drawSearching, getDistanceProfile,
 } from './gaze/GazeCanvasHelpers';
 import { RedDotPursuitTab } from './gaze/RedDotPursuitStudio';
 import { Calibration5PointModal } from './gaze/Calibration5PointWizard';
@@ -186,9 +186,10 @@ export const AIGazeAnalyticsEngine: React.FC = () => {
               const estimatedCm = Math.round((6.3 * w * 0.85) / pupilDistancePx);
               distanceCm = Math.min(Math.max(estimatedCm, 20), 120);
 
-              if (distanceCm >= 50 && distanceCm <= 60) {
+              const distProf = getDistanceProfile();
+              if (distanceCm >= distProf.minCm && distanceCm <= distProf.maxCm) {
                 distanceStatus = 'optimal';
-              } else if (distanceCm > 60) {
+              } else if (distanceCm > distProf.maxCm) {
                 distanceStatus = 'too_far';
               } else {
                 distanceStatus = 'too_close';

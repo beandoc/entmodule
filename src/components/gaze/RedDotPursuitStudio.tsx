@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import {
   CameraState, LiveData, PursuitPattern, EyeTracingPoint, targetPositionAt, HUD_SYNC_INTERVAL_MS,
-  NYSTAGMUS_PATTERNS,
+  NYSTAGMUS_PATTERNS, getDistanceProfile, isMobileDevice,
 } from './GazeCanvasHelpers';
 import { EyeTracingGraph } from './EyeTracingGraph';
 import { VNGReportCard } from '../VNGReportCard';
@@ -62,8 +62,8 @@ export const RedDotPursuitTab: React.FC<{
   const [timeLeftSec, setTimeLeftSec] = useState<number>(60);
   const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Camera PIP Minimization Toggle
-  const [isCameraMinimized, setIsCameraMinimized] = useState(false);
+  // Camera PIP Minimization Toggle (default minimized on mobile to avoid obscuring small screen)
+  const [isCameraMinimized, setIsCameraMinimized] = useState(() => isMobileDevice());
 
   // Voice Feedback & Hands-Free Voice Command States
   const [voiceFeedbackEnabled, setVoiceFeedbackEnabled] = useState(true);
@@ -151,11 +151,12 @@ export const RedDotPursuitTab: React.FC<{
     const issues: string[] = [];
 
     // 1. Distance gate
+    const distProf = getDistanceProfile();
     if (liveDataRef.current.distanceStatus !== 'optimal') {
       const dist = liveDataRef.current.distanceCm;
       issues.push(hi
-        ? `दूरी ${dist}cm — 50–60cm पर बैठें`
-        : `Distance ${dist} cm — sit 50–60 cm from screen`);
+        ? `दूरी ${dist}cm — ${distProf.labelHi} पर रखें`
+        : `Distance ${dist} cm — hold at ${distProf.labelEn} from screen`);
     }
 
     // 2. Lighting — sample face visibility and landmark confidence
@@ -880,8 +881,9 @@ export const RedDotPursuitTab: React.FC<{
         </div>
       )}
 
-      <div className="bg-[#0b0f19] p-3 sm:p-4 rounded-2xl border border-white/10 flex flex-wrap items-center justify-between gap-3 shadow-xl">
-        <div className="flex flex-wrap items-center gap-2">
+      {/* Pattern Selector Bar */}
+      <div className="bg-[#0b0f19] p-3 sm:p-4 rounded-2xl border border-white/10 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 shadow-xl">
+        <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0 scrollbar-none sm:flex-wrap">
           {(
             [
               { id: 'horizontal', label: hi ? '↔ क्षैतिज स्मूथ परस्यूट' : '↔ Smooth Pursuit (Horizontal)' },
@@ -1019,11 +1021,14 @@ export const RedDotPursuitTab: React.FC<{
                   }`}
                 />
                 <span>
-                  {liveData.distanceStatus === 'optimal'
-                    ? (hi ? `✓ दूरी: ${liveData.distanceCm || 55}cm (उत्कृष्ट)` : `✓ Distance: ${liveData.distanceCm || 55} cm (Optimal)`)
-                    : liveData.distanceStatus === 'too_far'
-                    ? (hi ? `↔ थोड़ा पास आएं (50-60 सेमी) [${liveData.distanceCm}cm]` : `↔ Move Closer (50-60 cm) [${liveData.distanceCm} cm]`)
-                    : (hi ? `↔ थोड़ा पीछे हटें (50-60 सेमी) [${liveData.distanceCm}cm]` : `↔ Move Back (50-60 cm) [${liveData.distanceCm} cm]`)}
+                  {(() => {
+                    const dp = getDistanceProfile();
+                    return liveData.distanceStatus === 'optimal'
+                      ? (hi ? `✓ दूरी: ${liveData.distanceCm || dp.targetCm}cm (उत्कृष्ट)` : `✓ Distance: ${liveData.distanceCm || dp.targetCm} cm (Optimal)`)
+                      : liveData.distanceStatus === 'too_far'
+                      ? (hi ? `↔ थोड़ा पास लाएं (${dp.labelHi}) [${liveData.distanceCm}cm]` : `↔ Move Closer (${dp.labelEn}) [${liveData.distanceCm} cm]`)
+                      : (hi ? `↔ थोड़ा पीछे करें (${dp.labelHi}) [${liveData.distanceCm}cm]` : `↔ Move Back (${dp.labelEn}) [${liveData.distanceCm} cm]`);
+                  })()}
                 </span>
               </div>
             )}
@@ -1122,11 +1127,14 @@ export const RedDotPursuitTab: React.FC<{
                       liveData.distanceStatus === 'optimal' ? 'text-emerald-400' : 'text-amber-400'
                     }`}>
                       <span className={`w-2 h-2 rounded-full ${liveData.distanceStatus === 'optimal' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400 animate-bounce'}`} />
-                      {liveData.distanceStatus === 'optimal'
-                        ? (hi ? `✓ ${liveData.distanceCm || 55} सेमी (उत्कृष्ट)` : `✓ ${liveData.distanceCm || 55} cm (Optimal)`)
-                        : liveData.distanceStatus === 'too_far'
-                        ? (hi ? `↔ पास आएं (${liveData.distanceCm} cm → 50-60cm)` : `↔ Move Closer (${liveData.distanceCm} cm → 50–60 cm)`)
-                        : (hi ? `↔ पीछे हटें (${liveData.distanceCm} cm → 50-60cm)` : `↔ Move Back (${liveData.distanceCm} cm → 50–60 cm)`)}
+                      {(() => {
+                        const dp = getDistanceProfile();
+                        return liveData.distanceStatus === 'optimal'
+                          ? (hi ? `✓ ${liveData.distanceCm || dp.targetCm} सेमी (उत्कृष्ट)` : `✓ ${liveData.distanceCm || dp.targetCm} cm (Optimal)`)
+                          : liveData.distanceStatus === 'too_far'
+                          ? (hi ? `↔ पास लाएं (${liveData.distanceCm} cm → ${dp.labelHi})` : `↔ Move Closer (${liveData.distanceCm} cm → ${dp.labelEn})`)
+                          : (hi ? `↔ पीछे करें (${liveData.distanceCm} cm → ${dp.labelHi})` : `↔ Move Back (${liveData.distanceCm} cm → ${dp.labelEn})`);
+                      })()}
                     </span>
                   </div>
                 )}

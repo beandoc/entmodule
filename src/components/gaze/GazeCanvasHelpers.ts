@@ -36,6 +36,45 @@ function randomSaccadeX(stepIdx: number): number {
   return RANDOM_SACCADE_X[finalIdx];
 }
 
+export function isMobileDevice(): boolean {
+  if (typeof window === 'undefined') return false;
+  return (
+    window.innerWidth < 768 ||
+    /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+  );
+}
+
+export interface DistanceProfile {
+  isMobile: boolean;
+  minCm: number;
+  maxCm: number;
+  targetCm: number;
+  labelEn: string;
+  labelHi: string;
+}
+
+export function getDistanceProfile(): DistanceProfile {
+  const mobile = isMobileDevice();
+  if (mobile) {
+    return {
+      isMobile: true,
+      minCm: 25,
+      maxCm: 45,
+      targetCm: 35,
+      labelEn: '30–40 cm',
+      labelHi: '30–40 सेमी',
+    };
+  }
+  return {
+    isMobile: false,
+    minCm: 45,
+    maxCm: 65,
+    targetCm: 55,
+    labelEn: '50–60 cm',
+    labelHi: '50–60 सेमी',
+  };
+}
+
 export interface LiveData {
   gazeX: number;
   gazeY: number;
